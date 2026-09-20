@@ -29,4 +29,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         shell: powershell
-        run: gh release create "${{ github.ref_name }}" "dist/도시교외간선도로분석_v1.3.0.exe" --generate-notes --title "KHCM Traffic Analyzer ${{ github.ref_name }}"
+        run: gh release create "${{ github.ref_name }}" "dist/도시교외간선도로분석_v1.3.1.exe" --generate-notes --title "KHCM Traffic Analyzer ${{ github.ref_name }}"

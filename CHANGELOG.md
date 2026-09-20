@@ -1,5 +1,10 @@
 # 변경 이력
 
+## 1.3.1
+
+- GitHub Actions가 설정된 Python을 사용하도록 Windows 빌드 스크립트 수정
+- 넓은 도로와 흰색 배경을 적용한 새 아이콘 반영
+
 ## 1.3.0
 
 - GitHub Releases 자동 업데이트 확인 기능 추가
