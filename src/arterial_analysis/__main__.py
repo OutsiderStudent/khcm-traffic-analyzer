@@ -1,0 +1,5 @@
+from .app_fast import main
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

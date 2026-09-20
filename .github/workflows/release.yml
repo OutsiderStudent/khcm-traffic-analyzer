@@ -1,0 +1,32 @@
+name: Build and release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install .[dev]
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -v
+      - name: Build executable
+        shell: powershell
+        run: .\build.ps1
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: powershell
+        run: gh release create "${{ github.ref_name }}" "dist/도시교외간선도로분석_v1.3.0.exe" --generate-notes --title "KHCM Traffic Analyzer ${{ github.ref_name }}"

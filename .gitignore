@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+build/
+dist/
+*.spec
+!khcm_arterial_analyzer.spec
+*.ara1
+validation/results_*/
+validation/*.png
