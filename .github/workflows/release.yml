@@ -29,4 +29,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         shell: powershell
-        run: gh release create "${{ github.ref_name }}" "dist/도시교외간선도로분석_v1.3.1.exe" --generate-notes --title "KHCM Traffic Analyzer ${{ github.ref_name }}"
+        run: |
+          $builtExe = Get-ChildItem -LiteralPath dist -Filter '*.exe' | Select-Object -First 1
+          if (-not $builtExe) { throw 'Built executable not found.' }
+          $releaseAsset = "dist/KHCM-Traffic-Analyzer_${{ github.ref_name }}.exe"
+          Copy-Item -LiteralPath $builtExe.FullName -Destination $releaseAsset
+          gh release create "${{ github.ref_name }}" $releaseAsset --generate-notes --title "KHCM Traffic Analyzer ${{ github.ref_name }}"
