@@ -58,7 +58,7 @@ from .engine import (
     road_condition,
 )
 from .project import ArterialProject
-from .reports import (ReportSpec,SEGMENT_GROUP,SEGMENT_HEADER_SPANS,SEGMENT_MERGE_COLUMNS,SEGMENT_WIDTHS,_segment_cells,comparison_report,future_report,render_report_image)
+from .reports import (ReportSpec,SEGMENT_GROUP,SEGMENT_HEADER_SPANS,SEGMENT_MERGE_COLUMNS,SEGMENT_WIDTHS,_segment_cells,comparison_report,future_report,render_report_image,result_sort_key)
 
 
 APP_NAME = "도시·교외간선도로 분석"
@@ -771,7 +771,7 @@ class InputPage(QWidget):
 
 def scenario_spec(project: ArterialProject, results: list[AnalysisResult], key: tuple[str, int]) -> ReportSpec:
     rows = [r for r in results if (r.segment.scenario, r.segment.year) == key]
-    rows.sort(key=lambda r: (r.segment.road_category, r.segment.road_name, r.segment.comparison_id, 0 if r.segment.direction == "→" else 1))
+    rows.sort(key=result_sort_key)
     return ReportSpec(
         title=f"{SCENARIO_LABEL[key[0]]}({key[1]}) 도시·교외간선도로 분석결과",
         groups=[SEGMENT_GROUP,("분석결과",["도로유형","구간거리\n(km)","교통량\n(대/시)","평균통행속도\n(km/h)","서비스수준\n(LOS)"])],
@@ -783,7 +783,7 @@ def scenario_spec(project: ArterialProject, results: list[AnalysisResult], key: 
 
 def detail_spec(results: list[AnalysisResult], key: tuple[str, int]) -> ReportSpec:
     rows = [r for r in results if (r.segment.scenario, r.segment.year) == key]
-    rows.sort(key=lambda r: (r.segment.road_category, r.segment.road_name, r.segment.comparison_id, 0 if r.segment.direction == "→" else 1))
+    rows.sort(key=result_sort_key)
     type_name = lambda value: {"유형 I": "유형1", "유형 II": "유형2", "유형 III": "유형3"}.get(value, value)
     return ReportSpec(
         title=f"{SCENARIO_LABEL[key[0]]}({key[1]}) 세부 계산결과",
@@ -809,8 +809,9 @@ def populate_spec(table: CopyableTable, spec: ReportSpec) -> None:
     visual_rows=[]; last_category=None
     for data_index,row in enumerate(spec.rows):
         category=spec.row_categories[data_index] if data_index<len(spec.row_categories) else ""
-        if category and category!=last_category:
-            vr=table.rowCount(); table.insertRow(vr); table.setSpan(vr,0,1,columns); section=QTableWidgetItem("■ 내부도로" if category==INTERNAL else "■ 외부도로"); section.setTextAlignment(Qt.AlignLeft|Qt.AlignVCenter); section.setBackground(QColor("#DCE7F5")); section.setForeground(QColor("#1E3A5F")); table.setItem(vr,0,section); last_category=category
+        category_group=("내부도로" if category==INTERNAL else "외부도로") if category else ""
+        if category_group and category_group!=last_category:
+            vr=table.rowCount(); table.insertRow(vr); table.setSpan(vr,0,1,columns); section=QTableWidgetItem("■ "+category_group); section.setTextAlignment(Qt.AlignLeft|Qt.AlignVCenter); section.setBackground(QColor("#DCE7F5")); section.setForeground(QColor("#1E3A5F")); table.setItem(vr,0,section); last_category=category_group
         row_index=table.rowCount(); table.insertRow(row_index); visual_rows.append((data_index,row_index))
         for col, value in enumerate(row):
             text = str(value)
@@ -824,7 +825,8 @@ def populate_spec(table: CopyableTable, spec: ReportSpec) -> None:
                 if table.item(row_index,col): table.item(row_index,col).setBackground(QColor("#FFF1D6")); table.item(row_index,col).setToolTip(spec.row_warnings[data_index])
         if spec.row_details and data_index<len(spec.row_details):
             detail_row=table.rowCount(); table.insertRow(detail_row); table.setSpan(detail_row,0,1,columns); detail_text=(spec.row_warnings[data_index]+" · " if data_index<len(spec.row_warnings) and spec.row_warnings[data_index] else "")+spec.row_details[data_index]; detail_item=QTableWidgetItem(""); detail_item.setData(Qt.UserRole,detail_text); detail_item.setBackground(QColor("#F7FAFC")); detail_item.setForeground(QColor("#475569")); table.setItem(detail_row,0,detail_item); table.setRowHidden(detail_row,True)
-            button=QPushButton("검토 ▼" if not (data_index<len(spec.row_warnings) and spec.row_warnings[data_index]) else "확인 필요 ▼"); button.setObjectName("reviewButton"); button.clicked.connect(lambda _=False,r=detail_row,b=button:self_toggle_detail(table,r,b)); table.setCellWidget(row_index,columns-1,button)
+            collapsed_text="검토 ▼" if not (data_index<len(spec.row_warnings) and spec.row_warnings[data_index]) else "확인 필요 ▼"
+            button=QPushButton(collapsed_text); button.setObjectName("reviewButton"); button.setProperty("collapsedText",collapsed_text); button.setMinimumHeight(max(28,button.fontMetrics().height()+10)); button.clicked.connect(lambda _=False,r=detail_row,b=button:self_toggle_detail(table,r,b)); table.setCellWidget(row_index,columns-1,button); table.setRowHeight(row_index,max(38,button.minimumHeight()+10))
     # 양방향 한 쌍의 공통 구간정보는 세로 병합하고 방향만 분리한다.
     if not spec.row_details:
         start=0
@@ -846,7 +848,7 @@ def self_toggle_detail(table: QTableWidget,row: int,button: QPushButton) -> None
     if item:item.setText(str(item.data(Qt.UserRole) or "") if opening else "")
     table.setRowHidden(row,not opening)
     if opening: table.resizeRowToContents(row); table.setRowHeight(row,max(42,table.rowHeight(row)))
-    button.setText(("접기 ▲" if opening else "검토 ▼"))
+    button.setText("접기 ▲" if opening else str(button.property("collapsedText") or "검토 ▼"))
 
 
 class ResultsPage(QWidget):
@@ -922,10 +924,72 @@ class ResultsPage(QWidget):
 
     def update_hero(self) -> None:
         if not self.scope: self.hero.setText("분석할 구간이 없습니다."); return
-        rank = {"A":0,"B":1,"C":2,"D":3,"E":4,"F":5,"FF":6,"FFF":7}
-        speeds = [r.speed_kmh for r in self.scope]; grades = [r.los for r in self.scope]
-        best, worst = min(grades, key=lambda value: rank[value]), max(grades, key=lambda value: rank[value])
-        self.hero.setText(f"도시 및 교외간선도로의 평균통행속도는 {min(speeds):.1f}~{max(speeds):.1f}km/h, 서비스수준은 “{best}”~“{worst}”로 분석되었음")
+        data=self.tabs.tabData(self.tabs.currentIndex())
+        if data and data[0] in ("compare_nb","compare_im"):
+            year=data[1]
+            before_scenario,after_scenario=(("사업 미시행시","사업 시행시") if data[0]=="compare_nb" else ("사업 시행시","개선대책 이행시"))
+            self.hero.setText(self._comparison_hero(year,before_scenario,after_scenario));return
+        scenario=(data[1] if data and data[0]=="scenario" else (data[1] if data and data[0]=="future" else ""))
+        include_internal=scenario in ("사업 시행시","개선대책 이행시")
+        lines=[]
+        external=[r for r in self.scope if r.segment.road_category!=INTERNAL]
+        internal=[r for r in self.scope if r.segment.road_category==INTERNAL]
+        if external:lines.append(self._scenario_hero_line("외부도로",external))
+        if include_internal and internal:lines.append(self._scenario_hero_line("내부도로",internal))
+        self.hero.setText("\n".join(lines) if lines else "분석할 구간이 없습니다.")
+
+    @staticmethod
+    def _los_range(results: list[AnalysisResult]) -> tuple[str,str]:
+        rank={"A":0,"B":1,"C":2,"D":3,"E":4,"F":5,"FF":6,"FFF":7}
+        grades=[r.los for r in results]
+        return min(grades,key=lambda value:rank.get(value,99)),max(grades,key=lambda value:rank.get(value,99))
+
+    @classmethod
+    def _scenario_hero_line(cls,label: str,results: list[AnalysisResult]) -> str:
+        speeds=[r.speed_kmh for r in results];best,worst=cls._los_range(results)
+        return f"{label}의 평균통행속도는 {min(speeds):.1f}~{max(speeds):.1f}km/h, 서비스수준은 “{best}”~“{worst}”로 분석되었음"
+
+    @staticmethod
+    def _speed_change_phrase(changes: list[float]) -> tuple[str,str]:
+        low,high=min(changes),max(changes)
+        if low>=-0.049 and high<=0.049:return "변화가 없었고",""
+        if low>=-0.049:return f"{max(0,low):.1f}~{high:.1f}km/h 증가", "했고"
+        if high<=0.049:return f"{abs(high):.1f}~{abs(low):.1f}km/h 감소", "했고"
+        return f"{abs(low):.1f}km/h 감소~{high:.1f}km/h 증가", "했고"
+
+    @staticmethod
+    def _changed_segment_label(before: AnalysisResult,after: AnalysisResult) -> str:
+        segment=after.segment
+        start,end=segment.start_name or str(segment.start_number),segment.end_name or str(segment.end_number)
+        if segment.direction=="←":start,end=end,start
+        return f"{segment.road_name} {start}→{end} {before.los}→{after.los}"
+
+    def _comparison_hero(self,year: int,before_scenario: str,after_scenario: str) -> str:
+        before={(r.segment.comparison_id,r.segment.direction):r for r in self.results if r.segment.scenario==before_scenario and r.segment.year==year}
+        after={(r.segment.comparison_id,r.segment.direction):r for r in self.results if r.segment.scenario==after_scenario and r.segment.year==year}
+        # 신규·삭제 구간은 요약문에서 언급하지 않고 양쪽에 모두 있는 구간만 비교한다.
+        pairs=[(before[key],after[key]) for key in before.keys()&after.keys()]
+        action=after_scenario.replace(" ","")
+        lines=[]
+        for label,is_internal in (("외부도로",False),("내부도로",True)):
+            group=[(a,b) for a,b in pairs if (b.segment.road_category==INTERNAL)==is_internal]
+            if not group:continue
+            phrase,suffix=self._speed_change_phrase([b.speed_kmh-a.speed_kmh for a,b in group])
+            changed=[self._changed_segment_label(a,b) for a,b in group if a.los!=b.los]
+            if phrase=="변화가 없었고":speed_clause=f"평균통행속도는 {phrase}"
+            else:speed_clause=f"평균통행속도가 {phrase}{suffix}"
+            if changed:
+                los_clause="서비스수준은 "+", ".join(changed)+"로 변화하였음"
+                lines.append(f"{action} {label}의 {speed_clause}, {los_clause}")
+            else:
+                best,worst=self._los_range([a for a,_ in group])
+                connector="으나" if phrase!="변화가 없었고" else " "
+                if phrase!="변화가 없었고":
+                    speed_clause=f"평균통행속도가 {phrase}하였으나"
+                else:
+                    speed_clause="평균통행속도는 변화가 없었고"
+                lines.append(f"{action} {label}의 {speed_clause}, 서비스수준은 “{best}”~“{worst}”로 동일하게 분석되었음")
+        return "\n".join(lines) if lines else "직접 비교할 수 있는 동일 구간이 없습니다."
 
     def edit_speed(self,item: QTableWidgetItem) -> None:
         data=self.tabs.tabData(self.tabs.currentIndex())

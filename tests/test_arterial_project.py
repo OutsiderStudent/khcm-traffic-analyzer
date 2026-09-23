@@ -59,6 +59,26 @@ class ArterialProjectTest(unittest.TestCase):
         self.assertNotIn("교통량 증감률", spec.headers)
         self.assertTrue(any("교통량 증감률" in detail and "V/c" in detail and "지체 변화" in detail for detail in spec.row_details))
 
+    def test_comparison_deltas_hide_plus_and_render_zero_as_dash(self):
+        project=ArterialProject(current_year=2026,future_years=[2033]);project.add_starter_rows()
+        project.copy_rows("현황",2026,"사업 미시행시",2033);project.copy_rows("현황",2026,"사업 시행시",2033)
+        before=project.rows("사업 미시행시",2033);after=project.rows("사업 시행시",2033)
+        for row in before+after:row.blank_fields=[];row.main_volume=500;row.manual_speed_kmh=30
+        after[0].main_volume=600;after[0].manual_speed_kmh=35
+        spec=comparison_report(project,project.analyze_all(),2033,"사업 미시행시","사업 시행시")
+        self.assertEqual(spec.rows[0][12],"100")
+        self.assertEqual(spec.rows[0][13],"5.0")
+        self.assertEqual(spec.rows[1][12],"-")
+        self.assertEqual(spec.rows[1][13],"-")
+        self.assertEqual(spec.rows[1][14],"-")
+
+    def test_reports_group_external_before_internal_then_road_name(self):
+        project=ArterialProject();project.add_starter_rows()
+        external=project.segments[0];external.road_name="나로"
+        internal=project.segments[1];internal.road_category="사업지 내부도로";internal.road_name="가로"
+        spec=current_report(project,project.analyze_all())
+        self.assertEqual(spec.row_categories,["외부 기존도로","사업지 내부도로"])
+
     def test_manual_speed_and_history_survive_save_load(self):
         project=ArterialProject(); project.add_starter_rows(); segment=project.segments[0]
         segment.manual_speed_kmh=33.3; segment.speed_adjustment_history=[{"changed_at":"2026-08-30T12:00:00+09:00","reason":"현장자료"}]

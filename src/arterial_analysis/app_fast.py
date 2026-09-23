@@ -32,7 +32,7 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.7.9"
+APP_VERSION = "1.7.10"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -70,13 +70,35 @@ def build_network_graph(segments):
 
 class NetworkDiagramWidget(QWidget):
     edgeSelected=Signal(object)
+    zoomChanged=Signal(int)
     def __init__(self,parent=None):
-        super().__init__(parent);self.nodes={};self.edges=[];self.title="";self.settings=None;self.highlight_uids=set();self._hit_edges=[];self._arrow_segments=[];self._label_boxes=[];self._layout_signature=None;self._layout={};self.setMinimumSize(660,420);self.setMouseTracking(True)
+        super().__init__(parent);self.nodes={};self.edges=[];self.title="";self.settings=None;self.highlight_uids=set();self._hit_edges=[];self._arrow_segments=[];self._label_boxes=[];self._layout_signature=None;self._layout={};self._base_size=QSize(700,500);self._zoom=1.0;self.scroll_area=None;self._press_pos=None;self._press_global=None;self._press_edge=None;self._panning=False;self._scroll_start=(0,0);self.setMinimumSize(1,1);self.setMouseTracking(True)
     def set_segments(self,segments,title="",highlight_uid="",settings=None):
         self.nodes,self.edges=build_network_graph(segments);self.title=title;self.settings=settings;self.highlight_uids={str(x) for x in (highlight_uid if isinstance(highlight_uid,(set,list,tuple)) else [highlight_uid]) if x}
         signature=tuple(sorted((repr(edge["start"]),repr(edge["end"])) for edge in self.edges))
         if signature!=self._layout_signature:self._layout_signature=signature;self._layout=self._build_non_crossing_layout()
-        count=len(self.nodes);self.setFixedSize(max(700,720+max(0,count-4)*110),max(460,500+max(0,count-4)*90));self.update()
+        count=len(self.nodes);self._base_size=QSize(max(700,720+max(0,count-4)*110),max(460,500+max(0,count-4)*90));self._apply_zoom_size();self.update()
+    def _apply_zoom_size(self):
+        self.setFixedSize(max(240,round(self._base_size.width()*self._zoom)),max(180,round(self._base_size.height()*self._zoom)))
+    def set_zoom(self,value,anchor=None):
+        old=self._zoom;value=max(.35,min(2.5,float(value)))
+        if abs(value-old)<.001:return
+        scroll=self.scroll_area
+        viewport_pos=None
+        if scroll is not None and anchor is not None:
+            viewport_pos=self.mapTo(scroll.viewport(),anchor)
+        self._zoom=value;self._apply_zoom_size();self.zoomChanged.emit(round(value*100))
+        if scroll is not None and anchor is not None and viewport_pos is not None:
+            ratio=value/old
+            scroll.horizontalScrollBar().setValue(round(anchor.x()*ratio-viewport_pos.x()))
+            scroll.verticalScrollBar().setValue(round(anchor.y()*ratio-viewport_pos.y()))
+        self.update()
+    def fit_to_view(self):
+        if self.scroll_area is None:return
+        viewport=self.scroll_area.viewport().size()
+        factor=min(viewport.width()/max(1,self._base_size.width()),viewport.height()/max(1,self._base_size.height()))
+        self.set_zoom(min(1.0,max(.35,factor*.97)))
+        self.scroll_area.horizontalScrollBar().setValue(0);self.scroll_area.verticalScrollBar().setValue(0)
     @staticmethod
     def _metric_text(segment,settings):
         if settings is None:return ""
@@ -244,20 +266,42 @@ class NetworkDiagramWidget(QWidget):
         return min(candidates,key=lambda value:value[0])[1] if candidates else None
     def mousePressEvent(self,event):
         if event.button()==Qt.LeftButton:
-            edge=self._edge_at(event.position())
-            if edge:
-                self.highlight_uids=set(edge["uids"]);self.update();self.edgeSelected.emit(set(edge["uids"]));event.accept();return
+            self._press_pos=event.position();self._press_global=event.globalPosition();self._press_edge=self._edge_at(event.position());self._panning=False
+            if self.scroll_area is not None:self._scroll_start=(self.scroll_area.horizontalScrollBar().value(),self.scroll_area.verticalScrollBar().value())
+            event.accept();return
         super().mousePressEvent(event)
     def mouseMoveEvent(self,event):
+        if self._press_pos is not None and event.buttons()&Qt.LeftButton and self.scroll_area is not None:
+            delta=event.globalPosition()-self._press_global
+            if self._panning or math.hypot(delta.x(),delta.y())>=5:
+                self._panning=True;self.setCursor(Qt.ClosedHandCursor)
+                self.scroll_area.horizontalScrollBar().setValue(round(self._scroll_start[0]-delta.x()))
+                self.scroll_area.verticalScrollBar().setValue(round(self._scroll_start[1]-delta.y()))
+                event.accept();return
         edge=self._edge_at(event.position());self.setCursor(Qt.PointingHandCursor if edge else Qt.ArrowCursor)
         self.setToolTip("입력표에서 이 가로구간 선택" if edge else "");super().mouseMoveEvent(event)
+    def mouseReleaseEvent(self,event):
+        if event.button()==Qt.LeftButton and self._press_pos is not None:
+            edge=self._press_edge;was_panning=self._panning;self._press_pos=None;self._press_global=None;self._press_edge=None;self._panning=False
+            if not was_panning and edge:
+                self.highlight_uids=set(edge["uids"]);self.update();self.edgeSelected.emit(set(edge["uids"]))
+            self.setCursor(Qt.PointingHandCursor if self._edge_at(event.position()) else Qt.ArrowCursor);event.accept();return
+        super().mouseReleaseEvent(event)
+    def wheelEvent(self,event):
+        delta=event.angleDelta().y()
+        if delta:
+            self.set_zoom(self._zoom*(1.15 if delta>0 else 1/1.15),event.position());event.accept();return
+        super().wheelEvent(event)
 
 
 class NetworkDiagramDialog(QDialog):
     def __init__(self,parent=None):
         super().__init__(parent);self.setWindowTitle("구간 연결 삽도");self.resize(740,540);self.setMinimumSize(630,450)
-        layout=QVBoxLayout(self);note=QLabel("입력표에서 선택한 구간은 주황색으로 강조됩니다. 삽도의 선이나 가로명을 클릭하면 입력표의 해당 구간이 선택됩니다.");note.setObjectName("infoBar");layout.addWidget(note)
-        self.diagram=NetworkDiagramWidget();self.scroll=QScrollArea();self.scroll.setWidget(self.diagram);self.scroll.setWidgetResizable(False);self.scroll.setAlignment(Qt.AlignCenter);self.scroll.setFrameShape(QFrame.NoFrame);layout.addWidget(self.scroll,1);buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.button(QDialogButtonBox.Close).setText("닫기");buttons.rejected.connect(self.hide);layout.addWidget(buttons)
+        layout=QVBoxLayout(self);note=QLabel("입력표에서 선택한 구간은 주황색으로 강조됩니다. 선을 클릭하면 구간이 선택되고, 빈 곳을 누른 채 끌면 삽도가 이동합니다.");note.setObjectName("infoBar");layout.addWidget(note)
+        tools=QHBoxLayout();self.fit_button=QPushButton("한눈에 보기");self.zoom_out=QPushButton("−");self.zoom_reset=QPushButton("100%");self.zoom_in=QPushButton("+");self.zoom_label=QLabel("100%");self.zoom_label.setMinimumWidth(42);self.zoom_label.setAlignment(Qt.AlignCenter);tools.addWidget(self.fit_button);tools.addStretch();tools.addWidget(self.zoom_out);tools.addWidget(self.zoom_reset);tools.addWidget(self.zoom_in);tools.addWidget(self.zoom_label);layout.addLayout(tools)
+        self.diagram=NetworkDiagramWidget();self.scroll=QScrollArea();self.scroll.setWidget(self.diagram);self.scroll.setWidgetResizable(False);self.scroll.setAlignment(Qt.AlignCenter);self.scroll.setFrameShape(QFrame.NoFrame);self.diagram.scroll_area=self.scroll;layout.addWidget(self.scroll,1)
+        self.fit_button.clicked.connect(self.diagram.fit_to_view);self.zoom_out.clicked.connect(lambda:self.diagram.set_zoom(self.diagram._zoom/1.15));self.zoom_in.clicked.connect(lambda:self.diagram.set_zoom(self.diagram._zoom*1.15));self.zoom_reset.clicked.connect(lambda:self.diagram.set_zoom(1.0));self.diagram.zoomChanged.connect(lambda value:self.zoom_label.setText(f"{value}%"))
+        buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.button(QDialogButtonBox.Close).setText("닫기");buttons.rejected.connect(self.hide);layout.addWidget(buttons)
     def closeEvent(self,event):event.ignore();self.hide()
 
 

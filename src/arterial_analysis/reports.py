@@ -40,6 +40,28 @@ def _key_order(key: tuple[str, str]) -> tuple[str, int]:
     return key[0], 0 if key[1] == "→" else 1
 
 
+def _road_group_order(category: str) -> int:
+    """외부도로 계열을 먼저, 사업지 내부도로를 나중에 표시한다."""
+    return 1 if category == "사업지 내부도로" else 0
+
+
+def result_sort_key(result: AnalysisResult) -> tuple[int, str, str, int]:
+    segment = result.segment
+    return (
+        _road_group_order(segment.road_category),
+        segment.road_name,
+        segment.comparison_id,
+        0 if segment.direction == "→" else 1,
+    )
+
+
+def _delta_text(value: float, decimals: int = 0) -> str:
+    """변화표는 양수의 +를 생략하고 정확한 0은 대시로 표시한다."""
+    if abs(value) < 10 ** (-(decimals + 2)):
+        return "-"
+    return _fmt_number(value, decimals)
+
+
 def _segment_label(result: AnalysisResult) -> str:
     s = result.segment
     start = f"{s.start_number}{s.start_name}" if str(s.start_number).strip() else s.start_name
@@ -79,7 +101,7 @@ def _fmt_number(value: float, decimals: int = 0) -> str:
 def current_report(project: ArterialProject, results: Iterable[AnalysisResult]) -> ReportSpec:
     current = sorted(
         (r for r in results if r.segment.scenario == "현황" and r.segment.year == project.current_year),
-        key=lambda r: (r.segment.road_name, r.segment.comparison_id, 0 if r.segment.direction == "→" else 1),
+        key=result_sort_key,
     )
     rows = [
         [
@@ -111,7 +133,11 @@ def future_report(project: ArterialProject, results: Iterable[AnalysisResult], s
     future = [r for r in results if r.segment.scenario == scenario and r.segment.year in project.future_years]
     years = sorted({r.segment.year for r in future})
     lookup = {(r.segment.year, *_key(r)): r for r in future}
-    base_keys = sorted({_key(r) for r in future}, key=_key_order)
+    first_for_key = {
+        key: sorted((r for r in future if _key(r) == key), key=lambda r: r.segment.year)[0]
+        for key in {_key(r) for r in future}
+    }
+    base_keys = sorted(first_for_key, key=lambda key: result_sort_key(first_for_key[key]))
     rows: list[list[str]] = []
     for comparison_id, direction in base_keys:
         candidates = [r for r in future if _key(r) == (comparison_id, direction)]
@@ -155,7 +181,11 @@ def comparison_report(
     warnings: list[str] = []
     highlights: set[tuple[int, int]] = set()
     categories: list[str] = []
-    for key in sorted(set(before) | set(after), key=_key_order):
+    ordered_keys = sorted(
+        set(before) | set(after),
+        key=lambda key: result_sort_key(after.get(key) or before[key]),
+    )
+    for key in ordered_keys:
         a, b = before.get(key), after.get(key)
         source = b or a
         if source is None:
@@ -176,9 +206,9 @@ def comparison_report(
             speed_delta = b.speed_kmh - a.speed_kmh
             volume_pct = "-" if a_volume == 0 else f"{volume_delta / a_volume * 100:+.1f}%"
             change = [
-                _fmt_number(volume_delta),
-                f"{speed_delta:+.1f}",
-                f"{a.los}→{b.los}",
+                _delta_text(volume_delta),
+                _delta_text(speed_delta, 1),
+                "-" if a.los == b.los else f"{a.los}→{b.los}",
             ]
             detail = f"교통량 증감률 {volume_pct} · V/c {a.vc_ratio:.2f}→{b.vc_ratio:.2f} · 지체 변화 {b.control_delay_s-a.control_delay_s:+.1f}초 · 차로수 {a.segment.lanes}→{b.segment.lanes} · g/C {a.segment.green_s/a.segment.cycle_s:.2f}→{b.segment.green_s/b.segment.cycle_s:.2f}"
             improved = b.speed_kmh > a.speed_kmh + 0.05 or ({"A":0,"B":1,"C":2,"D":3,"E":4,"F":5,"FF":6,"FFF":7}.get(b.los,9) < {"A":0,"B":1,"C":2,"D":3,"E":4,"F":5,"FF":6,"FFF":7}.get(a.los,9))
@@ -208,7 +238,7 @@ def comparison_report(
         highlight_cells=highlights,
         row_details=details,
         row_warnings=warnings,
-        header_spans=SEGMENT_HEADER_SPANS,row_pair_ids=[key[0] for key in sorted(set(before)|set(after),key=_key_order)],body_merge_columns=SEGMENT_MERGE_COLUMNS,
+        header_spans=SEGMENT_HEADER_SPANS,row_pair_ids=[key[0] for key in ordered_keys],body_merge_columns=SEGMENT_MERGE_COLUMNS,
     )
 
 

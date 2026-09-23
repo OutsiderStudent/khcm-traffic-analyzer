@@ -9,7 +9,7 @@ from PySide6.QtCore import QItemSelectionModel, QRect, QRectF, QSize, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QLineEdit, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
 
-from arterial_analysis.app_fast import APP_VERSION, FAST_STYLE, MainWindow, NetworkDiagramWidget, OptionalColorHeader, UserGuideDialog, build_network_graph, enable_native_file_dialogs
+from arterial_analysis.app_fast import APP_VERSION, FAST_STYLE, MainWindow, NetworkDiagramDialog, NetworkDiagramWidget, OptionalColorHeader, UserGuideDialog, build_network_graph, enable_native_file_dialogs
 from arterial_analysis.engine import SegmentInput
 from arterial_analysis.motion import MotionController
 
@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.7.9")
+        self.assertEqual(APP_VERSION,"1.7.10")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -71,6 +71,15 @@ class FastArterialUiTest(unittest.TestCase):
     def test_compact_detail_button_keeps_text_height(self):
         button=self.table.cellWidget(0,16)
         self.assertGreaterEqual(button.height(),button.fontMetrics().height()+4)
+
+    def test_comparison_review_buttons_keep_full_text_height(self):
+        self.fill_row(0);self.fill_row(1);self.page.save_current();project=self.window.project
+        for scenario in ("사업 미시행시","사업 시행시"):
+            project.ensure_tab(scenario,2033);project.copy_rows("현황",2026,scenario,2033)
+            for segment in project.rows(scenario,2033):segment.main_volume=600;segment.blank_fields=[field for field in segment.blank_fields if field!="main_volume"]
+        page=self.window.workflow.results_page;page.refresh(project,project.analyze_all());index=next(i for i in range(page.tabs.count()) if "미시행-시행" in page.tabs.tabText(i));page.tabs.setCurrentIndex(index);self.window.show();APP.processEvents()
+        buttons=page.table.findChildren(QPushButton,"reviewButton");self.assertTrue(buttons)
+        for button in buttons:self.assertGreaterEqual(button.height(),button.fontMetrics().height()+8);self.assertGreaterEqual(button.minimumHeight(),button.fontMetrics().height()+10)
 
     def test_history_toggle_is_hidden_while_drawer_is_open(self):
         self.window.show();APP.processEvents();self.window.history_dock.show();APP.processEvents()
@@ -317,6 +326,25 @@ class FastArterialUiTest(unittest.TestCase):
         widget=NetworkDiagramWidget();widget.set_segments(segments);positions=widget._positions(QRectF(0,0,900,650))
         self.assertEqual(widget._crossing_count(positions),0)
         self.assertGreater(widget.width(),700)
+
+    def test_network_diagram_has_fit_zoom_and_reset_controls(self):
+        dialog=NetworkDiagramDialog();dialog.resize(740,540);dialog.show();APP.processEvents()
+        self.assertEqual(dialog.fit_button.text(),"한눈에 보기")
+        dialog.diagram.set_zoom(1.5);self.assertEqual(dialog.zoom_label.text(),"150%")
+        dialog.zoom_reset.click();self.assertAlmostEqual(dialog.diagram._zoom,1.0)
+        dialog.fit_button.click();self.assertLessEqual(dialog.diagram._zoom,1.0);dialog.deleteLater()
+
+    def test_comparison_hero_lists_only_changed_existing_los(self):
+        self.fill_row(0);self.fill_row(1);self.page.save_current();project=self.window.project
+        for scenario in ("사업 미시행시","사업 시행시"):
+            project.ensure_tab(scenario,2033);project.copy_rows("현황",2026,scenario,2033)
+            for segment in project.rows(scenario,2033):segment.blank_fields=[]
+        before=project.rows("사업 미시행시",2033);after=project.rows("사업 시행시",2033)
+        before[0].manual_speed_kmh=25;after[0].manual_speed_kmh=35
+        before[1].manual_speed_kmh=45;after[1].manual_speed_kmh=47
+        new=SegmentInput.from_dict(after[0].to_dict());new.uid="new";new.comparison_id="new";new.road_name="신규로";project.segments.append(new)
+        page=self.window.workflow.results_page;page.refresh(project,project.analyze_all());index=next(i for i in range(page.tabs.count()) if "미시행-시행" in page.tabs.tabText(i));page.tabs.setCurrentIndex(index);APP.processEvents();text=page.hero.text()
+        self.assertIn("외부도로",text);self.assertIn("D→C",text);self.assertNotIn("신규로",text);self.assertNotIn("동일하게",text)
 
     def test_network_direction_metric_has_volume_speed_and_los(self):
         segment=self.window.project.rows("현황",2026)[0]
