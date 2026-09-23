@@ -11,4 +11,4 @@ __all__ = [
     "analyze_segment",
 ]
 
-__version__ = "1.7.10"
+__version__ = "1.8.0"

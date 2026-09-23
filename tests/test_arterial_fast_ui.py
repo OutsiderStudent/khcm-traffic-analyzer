@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.7.10")
+        self.assertEqual(APP_VERSION,"1.8.0")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -344,7 +344,23 @@ class FastArterialUiTest(unittest.TestCase):
         before[1].manual_speed_kmh=45;after[1].manual_speed_kmh=47
         new=SegmentInput.from_dict(after[0].to_dict());new.uid="new";new.comparison_id="new";new.road_name="신규로";project.segments.append(new)
         page=self.window.workflow.results_page;page.refresh(project,project.analyze_all());index=next(i for i in range(page.tabs.count()) if "미시행-시행" in page.tabs.tabText(i));page.tabs.setCurrentIndex(index);APP.processEvents();text=page.hero.text()
-        self.assertIn("외부도로",text);self.assertIn("D→C",text);self.assertNotIn("신규로",text);self.assertNotIn("동일하게",text)
+        self.assertIn("외부도로",text);self.assertIn("비슬로(기점→종점)는 “D”→“C”",text);self.assertIn("그 외 구간의 서비스수준은 “B”로 동일하게 분석되었음",text);self.assertNotIn("신규로",text)
+
+    def test_single_los_summary_does_not_repeat_same_grade(self):
+        self.fill_row(0);self.fill_row(1);self.page.save_current();results=self.window.project.analyze_all()
+        for result in results:result.segment.manual_speed_kmh=35
+        results=self.window.project.analyze_all();text=self.window.workflow.results_page._scenario_hero_line("외부도로",results)
+        self.assertIn("서비스수준은 “C”로 분석되었음",text);self.assertNotIn("“C”~“C”",text)
+
+    def test_result_pair_rows_share_one_background_band(self):
+        self.fill_row(0);self.fill_row(1);self.page.save_current();page=self.window.workflow.results_page;page.refresh(self.window.project,self.window.project.analyze_all());APP.processEvents()
+        data_rows=[]
+        for row in range(page.table.rowCount()):
+            item=page.table.item(row,0)
+            if item and item.data(Qt.UserRole):data_rows.append(row)
+        self.assertGreaterEqual(len(data_rows),2)
+        first,second=data_rows[:2]
+        self.assertEqual([page.table.item(first,col).background().color().name() for col in range(page.table.columnCount())],[page.table.item(second,col).background().color().name() for col in range(page.table.columnCount())])
 
     def test_network_direction_metric_has_volume_speed_and_los(self):
         segment=self.window.project.rows("현황",2026)[0]

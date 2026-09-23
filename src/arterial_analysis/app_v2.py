@@ -796,7 +796,7 @@ def detail_spec(results: list[AnalysisResult], key: tuple[str, int]) -> ReportSp
 
 def populate_spec(table: CopyableTable, spec: ReportSpec) -> None:
     columns = len(spec.headers); table.clear(); table.setColumnCount(columns); table.setRowCount(2)
-    table.horizontalHeader().setVisible(False); table.setEditTriggers(QAbstractItemView.NoEditTriggers); table.clearSpans()
+    table.horizontalHeader().setVisible(False); table.setEditTriggers(QAbstractItemView.NoEditTriggers); table.clearSpans(); table.setAlternatingRowColors(False)
     column = 0
     for group, headers in spec.groups:
         item = QTableWidgetItem(group); item.setTextAlignment(Qt.AlignCenter); table.setItem(0, column, item)
@@ -806,18 +806,21 @@ def populate_spec(table: CopyableTable, spec: ReportSpec) -> None:
     for start,span,label in spec.header_spans:
         table.item(1,start).setText(label)
         if span>1: table.setSpan(1,start,1,span)
-    visual_rows=[]; last_category=None
+    visual_rows=[]; last_category=None; last_pair=None; pair_band=-1
     for data_index,row in enumerate(spec.rows):
         category=spec.row_categories[data_index] if data_index<len(spec.row_categories) else ""
         category_group=("내부도로" if category==INTERNAL else "외부도로") if category else ""
         if category_group and category_group!=last_category:
             vr=table.rowCount(); table.insertRow(vr); table.setSpan(vr,0,1,columns); section=QTableWidgetItem("■ "+category_group); section.setTextAlignment(Qt.AlignLeft|Qt.AlignVCenter); section.setBackground(QColor("#DCE7F5")); section.setForeground(QColor("#1E3A5F")); table.setItem(vr,0,section); last_category=category_group
+        pair_id=spec.row_pair_ids[data_index] if data_index<len(spec.row_pair_ids) else f"row-{data_index}"
+        if pair_id!=last_pair:pair_band+=1;last_pair=pair_id
+        row_background=QColor("#FFFFFF" if pair_band%2==0 else "#F8FAFD")
         row_index=table.rowCount(); table.insertRow(row_index); visual_rows.append((data_index,row_index))
         for col, value in enumerate(row):
             text = str(value)
             numeric = bool(re.fullmatch(r"[+-]?[\d,]+(?:\.\d+)?%?", text))
             segment_column=col<6
-            item = QTableWidgetItem(text); item.setTextAlignment((Qt.AlignCenter if segment_column or not numeric else Qt.AlignRight) | Qt.AlignVCenter); table.setItem(row_index, col, item)
+            item = QTableWidgetItem(text); item.setTextAlignment((Qt.AlignCenter if segment_column or not numeric else Qt.AlignRight) | Qt.AlignVCenter); item.setBackground(row_background); table.setItem(row_index, col, item)
             if (data_index,col) in spec.highlight_cells: item.setForeground(QColor("#D7191C")); item.setBackground(QColor("#FFF0F0")); item.setFont(table.font()); item.setToolTip("수동조정값")
         if spec.row_uids and data_index<len(spec.row_uids): table.item(row_index,0).setData(Qt.UserRole,spec.row_uids[data_index])
         if spec.row_warnings and data_index<len(spec.row_warnings) and spec.row_warnings[data_index]:
@@ -945,9 +948,14 @@ class ResultsPage(QWidget):
         return min(grades,key=lambda value:rank.get(value,99)),max(grades,key=lambda value:rank.get(value,99))
 
     @classmethod
+    def _los_range_text(cls,results: list[AnalysisResult]) -> str:
+        best,worst=cls._los_range(results)
+        return f"“{best}”" if best==worst else f"“{best}”~“{worst}”"
+
+    @classmethod
     def _scenario_hero_line(cls,label: str,results: list[AnalysisResult]) -> str:
-        speeds=[r.speed_kmh for r in results];best,worst=cls._los_range(results)
-        return f"{label}의 평균통행속도는 {min(speeds):.1f}~{max(speeds):.1f}km/h, 서비스수준은 “{best}”~“{worst}”로 분석되었음"
+        speeds=[r.speed_kmh for r in results]
+        return f"{label}의 평균통행속도는 {min(speeds):.1f}~{max(speeds):.1f}km/h, 서비스수준은 {cls._los_range_text(results)}로 분석되었음"
 
     @staticmethod
     def _speed_change_phrase(changes: list[float]) -> tuple[str,str]:
@@ -962,7 +970,7 @@ class ResultsPage(QWidget):
         segment=after.segment
         start,end=segment.start_name or str(segment.start_number),segment.end_name or str(segment.end_number)
         if segment.direction=="←":start,end=end,start
-        return f"{segment.road_name} {start}→{end} {before.los}→{after.los}"
+        return f"{segment.road_name}({start}→{end})는 “{before.los}”→“{after.los}”"
 
     def _comparison_hero(self,year: int,before_scenario: str,after_scenario: str) -> str:
         before={(r.segment.comparison_id,r.segment.direction):r for r in self.results if r.segment.scenario==before_scenario and r.segment.year==year}
@@ -976,19 +984,20 @@ class ResultsPage(QWidget):
             if not group:continue
             phrase,suffix=self._speed_change_phrase([b.speed_kmh-a.speed_kmh for a,b in group])
             changed=[self._changed_segment_label(a,b) for a,b in group if a.los!=b.los]
+            unchanged=[a for a,b in group if a.los==b.los]
             if phrase=="변화가 없었고":speed_clause=f"평균통행속도는 {phrase}"
             else:speed_clause=f"평균통행속도가 {phrase}{suffix}"
             if changed:
                 los_clause="서비스수준은 "+", ".join(changed)+"로 변화하였음"
+                if unchanged:
+                    los_clause=los_clause.removesuffix("였음")+f"였고, 그 외 구간의 서비스수준은 {self._los_range_text(unchanged)}로 동일하게 분석되었음"
                 lines.append(f"{action} {label}의 {speed_clause}, {los_clause}")
             else:
-                best,worst=self._los_range([a for a,_ in group])
-                connector="으나" if phrase!="변화가 없었고" else " "
                 if phrase!="변화가 없었고":
                     speed_clause=f"평균통행속도가 {phrase}하였으나"
                 else:
                     speed_clause="평균통행속도는 변화가 없었고"
-                lines.append(f"{action} {label}의 {speed_clause}, 서비스수준은 “{best}”~“{worst}”로 동일하게 분석되었음")
+                lines.append(f"{action} {label}의 {speed_clause}, 서비스수준은 {self._los_range_text([a for a,_ in group])}로 동일하게 분석되었음")
         return "\n".join(lines) if lines else "직접 비교할 수 있는 동일 구간이 없습니다."
 
     def edit_speed(self,item: QTableWidgetItem) -> None:
