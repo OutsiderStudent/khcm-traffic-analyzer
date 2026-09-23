@@ -23,11 +23,12 @@ from .app_v2 import (APP_AUTHOR, APP_EMAIL, CopyableTable, CenterCheckDelegate, 
 from .engine import FUNCTIONAL_CLASSES, ROAD_CATEGORIES, SegmentInput, analyze_segment, arterial_type, road_condition
 from .excel_links import SUPPORTED_EXTENSIONS, active_selection, list_sheets, normalize_cell, open_and_activate, read_saved_cell, read_saved_cells
 from .project import ArterialProject
+from .motion import MotionController
 from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.4.0"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -776,7 +777,10 @@ class Workflow(QWidget):
         if self.stack.currentIndex()==0:self.commit()
         if index>=1:self.results=self.project.analyze_all();self.results_page.refresh(self.project,self.results)
         if index==2:self.detail_page.refresh(self.project,self.results)
-        self.stack.setCurrentIndex(index);labels=["○ 구간 입력","○ 분석 결과","○ 세부 계산결과"];labels[index]=labels[index].replace("○","●");self.steps.setText("     ".join(labels))
+        self.stack.setCurrentIndex(index)
+        controller=getattr(QApplication.instance(),"motion_controller",None)
+        if controller is not None:controller.fade_widget(self.stack.currentWidget())
+        labels=["○ 구간 입력","○ 분석 결과","○ 세부 계산결과"];labels[index]=labels[index].replace("○","●");self.steps.setText("     ".join(labels))
 
 
 class ShortcutDialog(QDialog):
@@ -861,10 +865,16 @@ FAST_STYLE=STYLE+"""
 QLabel#formulaBar{background:#FFFFFF;border:1px solid #D9E2EC;border-radius:6px;padding:6px 10px;color:#475569}
 QLabel#shortcutBar{background:#172033;color:white;border-radius:6px;padding:6px 10px;font-size:9pt}
 QLabel#compareBar{background:#E8F5E9;color:#176B3A;border:1px solid #8AC9A4;border-radius:7px;padding:7px 10px}
+QPushButton:pressed{background:#DCEAFF;border-color:#5B9BEF;color:#0F4FA8;padding-top:9px;padding-bottom:7px}
+QPushButton#primaryButton:hover,QPushButton#detailButton:hover{background:#1D6DDB;border-color:#1D6DDB}
+QPushButton#primaryButton:pressed,QPushButton#detailButton:pressed{background:#1557B7;border-color:#1557B7;color:white;padding-top:10px;padding-bottom:8px}
+QPushButton#reviewButton:pressed{background:#FFE4AF;border-color:#E39B3A;color:#7A3900;padding-top:5px;padding-bottom:3px}
+QToolButton#tabCloseButton:pressed{background:#FBCACA;color:#9F1239}
+QPushButton:disabled{background:#F1F4F7;color:#94A0AE;border-color:#D9E0E8}
 """
 def apply_light_palette(app):
     p=QPalette()
     for role,color in ((QPalette.Window,"#F5F7FA"),(QPalette.WindowText,"#172033"),(QPalette.Base,"#FFFFFF"),(QPalette.Text,"#172033"),(QPalette.Button,"#FFFFFF"),(QPalette.ButtonText,"#172033"),(QPalette.Highlight,"#DCEBFF"),(QPalette.HighlightedText,"#1261C9"),(QPalette.ToolTipBase,"#FFFFFF"),(QPalette.ToolTipText,"#172033")):p.setColor(role,QColor(color))
     app.setPalette(p)
 def main():
-    QApplication.setAttribute(Qt.AA_DontUseNativeDialogs,True);app=QApplication(sys.argv);app.setStyle("Fusion");apply_light_palette(app);load_font();app.setApplicationName(APP_NAME);app.setApplicationVersion(APP_VERSION);app.setStyleSheet(FAST_STYLE);w=MainWindow();w.show();return app.exec()
+    QApplication.setAttribute(Qt.AA_DontUseNativeDialogs,True);app=QApplication(sys.argv);app.setStyle("Fusion");apply_light_palette(app);load_font();app.setApplicationName(APP_NAME);app.setApplicationVersion(APP_VERSION);app.setStyleSheet(FAST_STYLE);w=MainWindow();motion=MotionController(app);app.motion_controller=motion;motion.bind(w);w.show();return app.exec()
