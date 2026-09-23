@@ -31,7 +31,7 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.7.6"
+APP_VERSION = "1.7.7"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -70,7 +70,7 @@ def build_network_graph(segments):
 class NetworkDiagramWidget(QWidget):
     edgeSelected=Signal(object)
     def __init__(self,parent=None):
-        super().__init__(parent);self.nodes={};self.edges=[];self.title="";self.settings=None;self.highlight_uids=set();self._hit_edges=[];self.setMinimumSize(660,420);self.setMouseTracking(True)
+        super().__init__(parent);self.nodes={};self.edges=[];self.title="";self.settings=None;self.highlight_uids=set();self._hit_edges=[];self._arrow_segments=[];self._label_boxes=[];self.setMinimumSize(660,420);self.setMouseTracking(True)
     def set_segments(self,segments,title="",highlight_uid="",settings=None):
         self.nodes,self.edges=build_network_graph(segments);self.title=title;self.settings=settings;self.highlight_uids={str(x) for x in (highlight_uid if isinstance(highlight_uid,(set,list,tuple)) else [highlight_uid]) if x};self.update()
     @staticmethod
@@ -90,6 +90,31 @@ class NetworkDiagramWidget(QWidget):
         back=QPointF(end.x()-ux*9,end.y()-uy*9);normal=QPointF(-uy*4,ux*4)
         painter.drawLine(end,back+normal);painter.drawLine(end,back-normal)
     @staticmethod
+    def _place_label_box(center,width,height,occupied,bounds,axis,normal,normal_sign=1):
+        """노드와 기존 문구를 피해 가장 가까운 빈 위치를 찾는다."""
+        candidates=[(along,away) for away in (0,22,-22,44,-44,66,-66,88,-88,110,-110) for along in (0,55,-55,110,-110,165,-165,220,-220)]
+        candidates.sort(key=lambda shift:abs(shift[0])+abs(shift[1])*1.25)
+        def available(box):
+            return bounds.contains(box) and not any(box.adjusted(-4,-3,4,3).intersects(other) for other in occupied)
+        for along,away in candidates:
+            x=center.x()+axis.x()*along+normal.x()*away*normal_sign
+            y=center.y()+axis.y()*along+normal.y()*away*normal_sign
+            box=QRectF(x-width/2,y-height/2,width,height)
+            if available(box):
+                occupied.append(box);return box
+        # Dense final search makes collision avoidance deterministic even in a
+        # compact triangle containing six directional metric labels.
+        xs=range(int(bounds.left()+width/2),int(bounds.right()-width/2)+1,10)
+        ys=range(int(bounds.top()+height/2),int(bounds.bottom()-height/2)+1,10)
+        points=sorted(((x,y) for y in ys for x in xs),key=lambda point:(point[0]-center.x())**2+(point[1]-center.y())**2)
+        for x,y in points:
+            box=QRectF(x-width/2,y-height/2,width,height)
+            if available(box):occupied.append(box);return box
+        box=QRectF(center.x()-width/2,center.y()-height/2,width,height)
+        box.moveLeft(max(bounds.left(),min(box.left(),bounds.right()-box.width())))
+        box.moveTop(max(bounds.top(),min(box.top(),bounds.bottom()-box.height())))
+        occupied.append(box);return box
+    @staticmethod
     def _sort_key(key):
         value=key[1]
         try:return (0,float(value))
@@ -105,7 +130,7 @@ class NetworkDiagramWidget(QWidget):
         return positions
     def paintEvent(self,event):
         # Keep hit targets in sync with the current frame, including an empty diagram.
-        self._hit_edges=[]
+        self._hit_edges=[];self._arrow_segments=[];self._label_boxes=[]
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing);painter.fillRect(self.rect(),QColor("#FFFFFF"))
         painter.setPen(QColor("#334155"));title_font=QFont(painter.font());title_font.setBold(True);title_font.setPointSize(11);painter.setFont(title_font);painter.drawText(QRectF(18,12,self.width()-36,28),Qt.AlignLeft|Qt.AlignVCenter,self.title)
         if not self.edges:
@@ -113,28 +138,37 @@ class NetworkDiagramWidget(QWidget):
             return
         painter.setFont(QFont(painter.font().family(),9));painter.setPen(QColor("#2563EB"));painter.drawText(QRectF(18,40,150,22),Qt.AlignLeft|Qt.AlignVCenter,"━ 외부도로")
         painter.setPen(QColor("#059669"));painter.drawText(QRectF(170,40,150,22),Qt.AlignLeft|Qt.AlignVCenter,"━ 내부도로")
-        area=QRectF(58,78,max(100,self.width()-116),max(100,self.height()-145));positions=self._positions(area)
+        area=QRectF(58,78,max(100,self.width()-116),max(100,self.height()-145));positions=self._positions(area);label_bounds=QRectF(20,68,max(100,self.width()-40),max(100,self.height()-108))
+        occupied=[QRectF(point.x()-72,point.y()-28,144,82) for point in positions.values()]
         label_font=QFont(painter.font());label_font.setPointSize(9)
         for edge in self.edges:
             first,second=positions[edge["start"]],positions[edge["end"]];highlight=bool(self.highlight_uids&edge["uids"])
             categories=edge["categories"];color=QColor("#7C3AED" if len(categories)>1 else ("#059669" if INTERNAL in categories else "#2563EB"))
             painter.setPen(QPen(QColor("#F59E0B") if highlight else color,4 if highlight else 2));painter.drawLine(first,second)
-            roads=" · ".join(sorted(edge["roads"]));mid=(first+second)/2;box=QRectF(mid.x()-78,mid.y()-12,156,24);self._hit_edges.append((edge,first,second,box))
-            if roads:
-                metrics=painter.fontMetrics();text=metrics.elidedText(roads,Qt.ElideRight,150);painter.fillRect(box,QColor(255,255,255,225));painter.setPen(QColor("#475569"));painter.setFont(label_font);painter.drawText(box,Qt.AlignCenter,text)
-            dx=second.x()-first.x();dy=second.y()-first.y();length=max(1,math.hypot(dx,dy));ux,uy=dx/length,dy/length;nx,ny=-uy,ux
+            roads=" · ".join(sorted(edge["roads"]));mid=(first+second)/2
+            dx=second.x()-first.x();dy=second.y()-first.y();length=max(1,math.hypot(dx,dy));ux,uy=dx/length,dy/length;nx,ny=-uy,ux;axis=QPointF(ux,uy);normal=QPointF(nx,ny)
             directions=sorted(edge["directions"],key=lambda item:0 if item["segment"].direction=="→" else 1)[:2]
             offsets=[-11,11] if len(directions)>1 else [-9]
+            # Labels must also avoid the two fixed-size arrow glyphs at the edge center.
+            for offset in offsets:
+                arrow_mid=QPointF(mid.x()+nx*offset,mid.y()+ny*offset)
+                occupied.append(QRectF(arrow_mid.x()-25,arrow_mid.y()-11,50,22))
+            box=self._place_label_box(mid,156,22,occupied,label_bounds,axis,normal);self._hit_edges.append((edge,first,second,box));self._label_boxes.append(box)
+            if roads:
+                metrics=painter.fontMetrics();text=metrics.elidedText(roads,Qt.ElideRight,150);painter.fillRect(box,QColor(255,255,255,225));painter.setPen(QColor("#475569"));painter.setFont(label_font);painter.drawText(box,Qt.AlignCenter,text)
             metric_font=QFont(painter.font());metric_font.setPointSize(8)
             for direction,offset in zip(directions,offsets):
                 origin,destination=positions[direction["from"]],positions[direction["to"]]
                 adx=destination.x()-origin.x();ady=destination.y()-origin.y();alen=max(1,math.hypot(adx,ady));aux,auy=adx/alen,ady/alen
-                start=QPointF(origin.x()+aux*29+nx*offset,origin.y()+auy*29+ny*offset);end=QPointF(destination.x()-aux*29+nx*offset,destination.y()-auy*29+ny*offset)
+                arrow_mid=QPointF(mid.x()+nx*offset,mid.y()+ny*offset);arrow_half=18
+                start=QPointF(arrow_mid.x()-aux*arrow_half,arrow_mid.y()-auy*arrow_half);end=QPointF(arrow_mid.x()+aux*arrow_half,arrow_mid.y()+auy*arrow_half)
                 arrow_color=QColor("#D97706") if highlight else color;self._draw_arrow(painter,start,end,arrow_color)
+                self._arrow_segments.append((start,end))
                 metric=self._metric_text(direction["segment"],self.settings)
                 if metric:
-                    label_offset=-30 if offset<0 else 30;label_mid=QPointF(mid.x()+nx*label_offset,mid.y()+ny*label_offset)
-                    metric_box=QRectF(label_mid.x()-112,label_mid.y()-10,224,20);painter.fillRect(metric_box,QColor(255,255,255,232));painter.setFont(metric_font);painter.setPen(QColor("#334155"));painter.drawText(metric_box,Qt.AlignCenter,painter.fontMetrics().elidedText(metric,Qt.ElideRight,218))
+                    label_offset=-38 if offset<0 else 38;label_mid=QPointF(mid.x()+nx*label_offset,mid.y()+ny*label_offset)
+                    metric_box=self._place_label_box(label_mid,224,20,occupied,label_bounds,axis,normal,-1 if offset<0 else 1);self._label_boxes.append(metric_box)
+                    painter.fillRect(metric_box,QColor(255,255,255,232));painter.setFont(metric_font);painter.setPen(QColor("#334155"));painter.drawText(metric_box,Qt.AlignCenter,painter.fontMetrics().elidedText(metric,Qt.ElideRight,218))
         node_font=QFont(painter.font());node_font.setBold(True);node_font.setPointSize(11);name_font=QFont(painter.font());name_font.setPointSize(8)
         highlighted_nodes=set()
         for edge in self.edges:

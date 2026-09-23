@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.7.6")
+        self.assertEqual(APP_VERSION,"1.7.7")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -320,6 +320,18 @@ class FastArterialUiTest(unittest.TestCase):
         spy=QSignalSpy(widget.edgeSelected);edge,start,end,_=widget._hit_edges[0];QTest.mouseClick(widget,Qt.LeftButton,pos=((start+end)/2).toPoint());APP.processEvents()
         self.assertEqual(spy.count(),1);self.assertEqual(set(spy.at(0)[0]),{"forward","backward"});self.assertEqual(widget.highlight_uids,{"forward","backward"})
 
+    def test_diagram_uses_equal_short_arrows_and_non_overlapping_labels(self):
+        def segment(uid,start,end,road,direction,volume):
+            return SegmentInput(uid=uid,comparison_id=road,scenario="현황",year=2026,road_name=road,start_number=start,start_name=f"{start}교차로",end_number=end,end_name=f"{end}교차로",direction=direction,main_volume=volume)
+        segments=[]
+        for start,end,road in (("1","2","가로A"),("1","3","가로B"),("2","3","가로C")):
+            segments.extend((segment(road+"a",start,end,road,"→",900),segment(road+"b",start,end,road,"←",800)))
+        widget=NetworkDiagramWidget();widget.resize(820,620);widget.set_segments(segments,settings=self.window.project.settings);widget.show();APP.processEvents()
+        lengths=[round(((end.x()-start.x())**2+(end.y()-start.y())**2)**0.5,1) for start,end in widget._arrow_segments]
+        self.assertEqual(lengths,[36.0]*6)
+        for index,box in enumerate(widget._label_boxes):
+            self.assertFalse(any(box.adjusted(-1,-1,1,1).intersects(other) for other in widget._label_boxes[index+1:]))
+
     def test_diagram_selection_selects_both_input_rows(self):
         rows=self.window.project.rows("현황",2026)[:2]
         for segment in rows:segment.road_name="가로A";segment.start_number="1";segment.start_name="1교차로";segment.end_number="2";segment.end_name="2교차로"
@@ -331,6 +343,15 @@ class FastArterialUiTest(unittest.TestCase):
         for segment in rows:segment.road_name="가로A";segment.start_number="1";segment.start_name="1교차로";segment.end_number="2";segment.end_name="2교차로"
         self.page.load_key(("현황",2026));self.page.show_network_diagram();self.table.setCurrentCell(0,7);APP.processEvents()
         self.assertIn(rows[0].uid,self.page.diagram_dialog.diagram.highlight_uids)
+
+    def test_diagram_and_selection_are_scoped_to_current_analysis_tab(self):
+        future=SegmentInput(uid="implementation-only",comparison_id="new-link",scenario="사업 시행시",year=2033,road_category="사업지 내부도로",road_name="연결로",start_number="1",start_name="1교차로",end_number="3",end_name="3교차로")
+        self.window.project.ensure_tab("사업 시행시",2033);self.window.project.segments.append(future)
+        self.page.load_key(("현황",2026));self.page.show_network_diagram();APP.processEvents()
+        self.assertNotIn("연결로",{road for edge in self.page.diagram_dialog.diagram.edges for road in edge["roads"]})
+        self.assertFalse(any(future.uid in edge["uids"] for edge in self.page.diagram_dialog.diagram.edges))
+        self.page.load_key(("사업 시행시",2033));APP.processEvents()
+        self.assertIn("연결로",{road for edge in self.page.diagram_dialog.diagram.edges for road in edge["roads"]})
 
 
 if __name__ == "__main__":
