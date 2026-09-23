@@ -5,9 +5,9 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton
+from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QPushButton
 
 from arterial_analysis.app_fast import APP_VERSION, MainWindow, NetworkDiagramWidget, build_network_graph
 from arterial_analysis.engine import SegmentInput
@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.5.1")
+        self.assertEqual(APP_VERSION,"1.6.0")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -140,7 +140,7 @@ class FastArterialUiTest(unittest.TestCase):
 
     def test_equal_shortcut_requests_excel_link_for_volume(self):
         self.table.linkRequested.disconnect();spy=QSignalSpy(self.table.linkRequested);self.table.setCurrentCell(0,12)
-        self.table._excel_link_shortcut.activated.emit()
+        QTest.keyClick(self.table,Qt.Key_Equal)
         self.assertEqual(spy.count(),1);self.assertEqual(spy.at(0),[0])
 
     def test_excel_selection_is_captured_before_enter_moves_cell(self):
@@ -166,17 +166,39 @@ class FastArterialUiTest(unittest.TestCase):
         reader.assert_called_once();first,second=self.window.project.rows("현황",2026)[:2];self.assertEqual(first.main_volume,1200);self.assertEqual(second.main_volume,1300)
 
     def test_ctrl_h_changes_selected_link_source_and_keeps_cell_address(self):
-        segment=self.window.project.rows("현황",2026)[0];segment.volume_source_cell="C20";self.page.load_key(("현황",2026));self.table.setCurrentCell(0,12)
+        segment=self.window.project.rows("현황",2026)[0];segment.volume_source_cell="C20";info=self.window.project.tab_info("현황",2026);info.update(source_path=str(Path(__file__).resolve()),source_sheet="현황2026");self.page.load_key(("현황",2026));self.table.setCurrentCell(0,12)
         replacement=str(__file__)
-        with patch("arterial_analysis.app_fast.QFileDialog.getOpenFileName",return_value=(replacement,"")),patch("arterial_analysis.app_fast.list_sheets",return_value=["미시행2033"]),patch("arterial_analysis.app_fast.QInputDialog.getItem",return_value=("미시행2033",True)):
+        with patch("arterial_analysis.app_fast.ReplaceExcelLinksDialog") as dialog_type,patch("arterial_analysis.app_fast.read_saved_cells",return_value={"C20":(1500,"C20","")}):
+            dialog=dialog_type.return_value;dialog.exec.return_value=QDialog.Accepted;dialog.values.return_value=(replacement,"미시행2033")
             self.page.replace_excel_sources(self.table)
         segment=self.window.project.rows("현황",2026)[0]
         self.assertEqual(segment.volume_source_cell,"C20");self.assertEqual(segment.volume_source_path,str(Path(replacement).resolve()));self.assertEqual(segment.volume_source_sheet,"미시행2033")
 
     def test_excel_linked_volume_has_excel_icon(self):
         segment=self.window.project.rows("현황",2026)[0];segment.volume_source_cell="B12";segment.volume_link_status="ok"
+        info=self.window.project.tab_info("현황",2026);info.update(source_path=str(Path(__file__).resolve()),source_sheet="현황2026")
         self.page.load_key(("현황",2026))
         self.assertFalse(self.table.item(0,12).icon().isNull())
+        self.assertTrue(str(self.table.item(0,12).data(Qt.UserRole+5)).startswith("="))
+
+    def test_copy_keeps_excel_formula_and_paste_requests_link(self):
+        item=self.table.item(0,12);self.table.setCurrentCell(0,12);self.table.blockSignals(True);item.setData(Qt.UserRole+5,"='C:\\[traffic.xlsx]현황2026'!$B$12");self.table.blockSignals(False);self.table.selectionModel().select(self.table.model().index(0,12),QItemSelectionModel.Select);self.table._copy()
+        self.assertIn("traffic.xlsx",QApplication.clipboard().text())
+        spy=QSignalSpy(self.table.formulasPasted);self.table.setCurrentCell(1,12);self.table._paste()
+        self.assertEqual(spy.count(),1);self.assertIn("traffic.xlsx",spy.at(0)[0][0][1])
+
+    def test_formula_bar_assigns_link_and_refreshes_saved_value(self):
+        self.table.setCurrentCell(0,12);self.page.cell_selected(self.table,0,12)
+        formula=f"='{Path(__file__).resolve().parent}\\[{Path(__file__).name}]현황2026'!$B$12";self.page.formula.setText(formula)
+        with patch("arterial_analysis.app_fast.read_saved_cells",return_value={"B12":(1700,"B12","")}):self.page.apply_formula_bar()
+        segment=self.window.project.rows("현황",2026)[0]
+        self.assertEqual(segment.main_volume,1700);self.assertEqual(segment.volume_source_cell,"B12")
+
+    def test_direct_paste_over_link_replaces_formula_like_excel(self):
+        segment=self.window.project.rows("현황",2026)[0];segment.volume_source_cell="B12";segment.volume_link_status="ok"
+        info=self.window.project.tab_info("현황",2026);info.update(source_path=str(Path(__file__).resolve()),source_sheet="현황2026");self.page.load_key(("현황",2026));self.table.setCurrentCell(0,12)
+        QApplication.clipboard().setText("1,800");self.table._paste();segment=self.window.project.rows("현황",2026)[0]
+        self.assertEqual(segment.main_volume,1800);self.assertEqual(segment.volume_source_cell,"")
 
     def test_non_segment_input_columns_have_equal_width(self):
         self.page.toggle_optional()
@@ -185,7 +207,7 @@ class FastArterialUiTest(unittest.TestCase):
     def test_narrow_metric_headers_are_wrapped_without_long_lines(self):
         for header in self.page.HEADERS[7:]:
             self.assertLessEqual(max(map(len,header.splitlines())),6)
-        self.assertGreaterEqual(self.table.horizontalHeader().height(),76)
+        self.assertGreaterEqual(self.table.horizontalHeader().height(),94)
 
     def test_lane_count_is_center_aligned(self):
         self.table.item(0,8).setText("10");self.page.commit_row(self.table,0,8)

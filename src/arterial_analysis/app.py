@@ -601,7 +601,9 @@ class GuidelinePage(QWidget):
         title = QLabel("도로용량편람(2013) 적용 기준과 계산 공식"); title.setObjectName("pageTitle"); root.addWidget(title)
         intro = QLabel("제12장 도시 및 교외간선도로와 제8장 신호교차로 산식을 기준으로 프로그램의 자동판정, 계산순서, 입력자료와 적용 한계를 정리했습니다. 표·본문이 충돌하는 항목은 프로그램 적용기준을 별도로 표시합니다.")
         intro.setObjectName("infoBar"); intro.setWordWrap(True); root.addWidget(intro)
-        tabs = QTabWidget(); tabs.setDocumentMode(True); root.addWidget(tabs, 1)
+        tabs = QTabWidget(); tabs.setDocumentMode(True); tabs.tabBar().setDrawBase(False)
+        tabs.setStyleSheet("QTabWidget::pane{border:0;background:transparent;} QTabBar{border:0;background:transparent;}")
+        root.addWidget(tabs, 1)
         tabs.addTab(self._page(self._overview_sections()), "분석범위·절차")
         tabs.addTab(self._page(self._classification_sections()), "유형·순행시간")
         tabs.addTab(self._page(self._formula_sections()), "지체·속도 공식")
@@ -616,6 +618,7 @@ class GuidelinePage(QWidget):
 
     def _page(self, sections: list[tuple[str, str]]) -> QScrollArea:
         area = QScrollArea(); area.setWidgetResizable(True); area.setFrameShape(QFrame.NoFrame)
+        area.setStyleSheet("QScrollArea{border:0;background:transparent;} QScrollArea>QWidget>QWidget{background:transparent;}")
         body = QWidget(); layout = QVBoxLayout(body); layout.setContentsMargins(4, 10, 8, 12); layout.setSpacing(10)
         for heading, text in sections: layout.addWidget(card(heading, self._label(text)))
         layout.addStretch(); area.setWidget(body); return area

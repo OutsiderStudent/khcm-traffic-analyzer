@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPropertyAnimation, QVariantAnimation, Qt
-from PySide6.QtGui import QPainter
+from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPropertyAnimation, QRectF, QVariantAnimation, Qt
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -11,21 +11,23 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QProxyStyle,
     QStyle,
+    QStyleOptionButton,
     QTabWidget,
     QWidget,
 )
 
 
 class TactileProxyStyle(QProxyStyle):
-    """배경만 축소하고 글자는 원래 해상도로 그리는 선명한 버튼 모션."""
+    """배경은 탄성 있게 눌리고 글자는 원해상도로 유지되는 버튼 스타일."""
 
     def drawControl(self, element, option, painter, widget=None):
         if element == QStyle.ControlElement.CE_PushButton and isinstance(widget, QAbstractButton):
             progress = max(-0.14, min(1.0, float(widget.property("khcmPressProgress") or 0.0)))
-            if abs(progress) < 0.001:
+            hover = max(0.0, min(1.0, float(widget.property("khcmHoverProgress") or 0.0)))
+            if abs(progress) < 0.001 and hover < 0.001:
                 super().drawControl(element, option, painter, widget)
                 return
-            scale = 1.0 - 0.055 * progress
+            scale = 1.0 - 0.072 * progress
             painter.save()
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.translate(widget.width() / 2, widget.height() / 2)
@@ -33,10 +35,20 @@ class TactileProxyStyle(QProxyStyle):
             painter.translate(-widget.width() / 2, -widget.height() / 2)
             super().drawControl(QStyle.ControlElement.CE_PushButtonBevel, option, painter, widget)
             painter.restore()
+
+            # A short blue halo makes hover/press feedback visible without rasterizing text.
             painter.save()
-            painter.translate(0, round(max(0.0, progress)))
-            super().drawControl(QStyle.ControlElement.CE_PushButtonLabel, option, painter, widget)
+            rect = QRectF(widget.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
+            halo = QColor(35, 117, 232, int(78 * hover + 42 * max(0.0, progress)))
+            painter.setPen(QPen(halo, 1.4 + 0.8 * max(0.0, progress)))
+            painter.setBrush(QColor(35, 117, 232, int(13 * max(0.0, progress))))
+            painter.drawRoundedRect(rect, 8.0, 8.0)
             painter.restore()
+
+            # Never transform or vertically offset glyphs; this fixes compact-button blur.
+            label_option = QStyleOptionButton(option)
+            label_option.state &= ~QStyle.StateFlag.State_Sunken
+            super().drawControl(QStyle.ControlElement.CE_PushButtonLabel, label_option, painter, widget)
             return
         super().drawControl(element, option, painter, widget)
 
@@ -46,6 +58,8 @@ class MotionController(QObject):
 
     PRESS_MS = 95
     RELEASE_MS = 260
+    HOVER_IN_MS = 140
+    HOVER_OUT_MS = 190
     PAGE_MS = 190
     DIALOG_MS = 180
 
@@ -57,7 +71,7 @@ class MotionController(QObject):
             reduced_motion = QApplication.platformName().lower() == "offscreen" or any(value.strip().lower() in {"1", "true", "yes", "on"} for value in values)
         self.reduced_motion = reduced_motion
         self._animations: dict[tuple[int, bytes], QPropertyAnimation] = {}
-        self._button_animations: dict[int, QVariantAnimation] = {}
+        self._button_animations: dict[tuple[int, str], QVariantAnimation] = {}
 
     def bind(self, root: QWidget) -> None:
         self.app.installEventFilter(self)
@@ -87,14 +101,14 @@ class MotionController(QObject):
         animation.finished.connect(finished)
         animation.start()
 
-    def _animate_button(self, button: QAbstractButton, end: float, duration: int, easing) -> None:
-        key = id(button)
+    def _animate_button(self, button: QAbstractButton, property_name: str, end: float, duration: int, easing) -> None:
+        key = (id(button), property_name)
         previous = self._button_animations.pop(key, None)
         if previous is not None:
             previous.stop()
-        start = float(button.property("khcmPressProgress") or 0.0)
+        start = float(button.property(property_name) or 0.0)
         if self.reduced_motion or not button.isEnabled():
-            button.setProperty("khcmPressProgress", 0.0)
+            button.setProperty(property_name, 0.0)
             button.update()
             return
         animation = QVariantAnimation(self)
@@ -104,7 +118,8 @@ class MotionController(QObject):
         animation.setEasingCurve(easing)
 
         def changed(value) -> None:
-            button.setProperty("khcmPressProgress", max(-0.14, min(1.0, float(value))))
+            lower = -0.14 if property_name == "khcmPressProgress" else 0.0
+            button.setProperty(property_name, max(lower, min(1.0, float(value))))
             button.update()
 
         def finished() -> None:
@@ -118,10 +133,24 @@ class MotionController(QObject):
         animation.start()
 
     def press_button(self, button: QAbstractButton) -> None:
-        self._animate_button(button, 1.0, self.PRESS_MS, QEasingCurve.OutCubic)
+        # Immediate 45% compression remains visible even on a very fast click.
+        button.setProperty("khcmPressProgress", max(0.45, float(button.property("khcmPressProgress") or 0.0)))
+        button.update()
+        self._animate_button(button, "khcmPressProgress", 1.0, self.PRESS_MS, QEasingCurve.OutCubic)
 
     def release_button(self, button: QAbstractButton) -> None:
-        self._animate_button(button, 0.0, self.RELEASE_MS, QEasingCurve.OutBack)
+        button.setProperty("khcmPressProgress", max(0.82, float(button.property("khcmPressProgress") or 0.0)))
+        button.update()
+        self._animate_button(button, "khcmPressProgress", 0.0, self.RELEASE_MS, QEasingCurve.OutBack)
+
+    def hover_button(self, button: QAbstractButton, entered: bool) -> None:
+        self._animate_button(
+            button,
+            "khcmHoverProgress",
+            1.0 if entered else 0.0,
+            self.HOVER_IN_MS if entered else self.HOVER_OUT_MS,
+            QEasingCurve.OutCubic,
+        )
 
     def fade_widget(self, widget: QWidget | None) -> None:
         if widget is None or self.reduced_motion:
@@ -155,6 +184,10 @@ class MotionController(QObject):
                 self.press_button(watched)
             elif event.type() == QEvent.KeyRelease and event.key() in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter):
                 self.release_button(watched)
+            elif event.type() == QEvent.Enter:
+                self.hover_button(watched, True)
+            elif event.type() == QEvent.Leave:
+                self.hover_button(watched, False)
         elif isinstance(watched, QDialog) and event.type() == QEvent.Show:
             self._fade_dialog(watched)
         return super().eventFilter(watched, event)
