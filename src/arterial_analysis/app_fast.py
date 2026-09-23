@@ -23,12 +23,12 @@ from .app_v2 import (APP_AUTHOR, APP_EMAIL, CopyableTable, CenterCheckDelegate, 
 from .engine import FUNCTIONAL_CLASSES, ROAD_CATEGORIES, SegmentInput, analyze_segment, arterial_type, road_condition
 from .excel_links import SUPPORTED_EXTENSIONS, active_selection, list_sheets, normalize_cell, open_and_activate, read_saved_cell, read_saved_cells
 from .project import ArterialProject
-from .motion import MotionController
+from .motion import MotionController, TactileProxyStyle
 from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.5.0"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -178,7 +178,7 @@ class BlankNumericDelegate(NumericDelegate):
     def __init__(self,integer,minimum,maximum,decimals=2,table=None,parent=None):super().__init__(integer,minimum,maximum,decimals,parent);self.table=table
     def createEditor(self,parent,option,index):
         editor=super().createEditor(parent,option,index)
-        editor.setStyleSheet("QLineEdit{padding:0 4px;min-height:0;border:2px solid #2375E8;border-radius:0;background:white;color:#172033;selection-background-color:#DCEBFF;selection-color:#172033;}")
+        editor.setStyleSheet("QLineEdit{padding:0 4px;min-height:0;border:2px solid #2375E8;border-radius:0;background:white;color:#253044;selection-background-color:#DDEBFF;selection-color:#1769D2;}")
         palette=editor.palette();palette.setColor(QPalette.Base,QColor("white"));palette.setColor(QPalette.Text,QColor("#172033"));palette.setColor(QPalette.Highlight,QColor("#DCEBFF"));palette.setColor(QPalette.HighlightedText,QColor("#172033"));editor.setPalette(palette);editor.setAutoFillBackground(True)
         editor.setProperty("navRow",index.row());editor.setProperty("navCol",index.column());editor.installEventFilter(self);return editor
     def eventFilter(self,obj,event):
@@ -361,7 +361,7 @@ class InputPage(QWidget):
         self.add.clicked.connect(self.add_pair);self.copy.clicked.connect(self.copy_selected);self.paste.clicked.connect(self.paste_selected);self.delete.clicked.connect(self.delete_selected);self.reset.clicked.connect(self.reset_selected);self.diagram_button.clicked.connect(self.show_network_diagram);self.optional.clicked.connect(self.toggle_optional)
         self._diagram_shortcut=QShortcut(QKeySequence("F6"),self);self._diagram_shortcut.setContext(Qt.WidgetWithChildrenShortcut);self._diagram_shortcut.activated.connect(self.show_network_diagram);self.changed.connect(self.refresh_network_diagram);self.refresh_tabs()
     def _make_table(self):
-        t=FastInputTable(0,len(self.HEADERS));t.setHorizontalHeaderLabels(self.HEADERS);t.verticalHeader().hide();t.setAlternatingRowColors(True);t.setSelectionMode(QAbstractItemView.ExtendedSelection);t.setSelectionBehavior(QAbstractItemView.SelectItems);t.setEditTriggers(QAbstractItemView.AllEditTriggers);t.setIconSize(QSize(14,14));t.frozen.setIconSize(QSize(14,14));t.horizontalHeader().setFixedHeight(76);t.frozen.horizontalHeader().setFixedHeight(76)
+        t=FastInputTable(0,len(self.HEADERS));t.setHorizontalHeaderLabels(self.HEADERS);t.verticalHeader().hide();t.verticalHeader().setDefaultSectionSize(36);t.frozen.verticalHeader().setDefaultSectionSize(36);t.setAlternatingRowColors(True);t.setSelectionMode(QAbstractItemView.ExtendedSelection);t.setSelectionBehavior(QAbstractItemView.SelectItems);t.setEditTriggers(QAbstractItemView.AllEditTriggers);t.setIconSize(QSize(14,14));t.frozen.setIconSize(QSize(14,14));t.horizontalHeader().setFixedHeight(76);t.frozen.horizontalHeader().setFixedHeight(76)
         header_font=t.horizontalHeader().font();header_font.setPointSize(9);t.horizontalHeader().setFont(header_font);t.frozen.horizontalHeader().setFont(header_font)
         widths=[40,88,42,106,32,42,106]+[76]*14
         for c,w in enumerate(widths):t.setColumnWidth(c,w)
@@ -865,16 +865,22 @@ FAST_STYLE=STYLE+"""
 QLabel#formulaBar{background:#FFFFFF;border:1px solid #D9E2EC;border-radius:6px;padding:6px 10px;color:#475569}
 QLabel#shortcutBar{background:#172033;color:white;border-radius:6px;padding:6px 10px;font-size:9pt}
 QLabel#compareBar{background:#E8F5E9;color:#176B3A;border:1px solid #8AC9A4;border-radius:7px;padding:7px 10px}
-QPushButton:pressed{background:#DCEAFF;border-color:#5B9BEF;color:#0F4FA8;padding-top:9px;padding-bottom:7px}
-QPushButton#primaryButton:hover,QPushButton#detailButton:hover{background:#1D6DDB;border-color:#1D6DDB}
-QPushButton#primaryButton:pressed,QPushButton#detailButton:pressed{background:#1557B7;border-color:#1557B7;color:white;padding-top:10px;padding-bottom:8px}
-QPushButton#reviewButton:pressed{background:#FFE4AF;border-color:#E39B3A;color:#7A3900;padding-top:5px;padding-bottom:3px}
+QPushButton{background:white;border:1px solid #DDE3EC;border-radius:9px;padding:7px 12px;font-weight:700;color:#253044}
+QPushButton:hover{background:#F0F5FF;border-color:#8CB9F5}
+QPushButton:pressed{background:#DCEAFF;border-color:#2375E8}
+QPushButton:focus{border:2px solid #2375E8}
+QPushButton#primaryButton,QPushButton#detailButton{background:#2375E8;color:white;border-color:#2375E8}
+QPushButton#detailButton{padding:4px 8px}
+QPushButton#primaryButton:hover,QPushButton#detailButton:hover{background:#1B6BD7;border-color:#1B6BD7}
+QPushButton#primaryButton:pressed,QPushButton#detailButton:pressed{background:#155FC7;border-color:#155FC7;color:white}
+QPushButton#reviewButton{padding:4px 7px}
+QPushButton#reviewButton:pressed{background:#FFE4AF;border-color:#D97706;color:#7A3900}
 QToolButton#tabCloseButton:pressed{background:#FBCACA;color:#9F1239}
-QPushButton:disabled{background:#F1F4F7;color:#94A0AE;border-color:#D9E0E8}
+QPushButton:disabled{background:#E9EDF2;color:#A4ACB8;border-color:#E9EDF2}
 """
 def apply_light_palette(app):
     p=QPalette()
-    for role,color in ((QPalette.Window,"#F5F7FA"),(QPalette.WindowText,"#172033"),(QPalette.Base,"#FFFFFF"),(QPalette.Text,"#172033"),(QPalette.Button,"#FFFFFF"),(QPalette.ButtonText,"#172033"),(QPalette.Highlight,"#DCEBFF"),(QPalette.HighlightedText,"#1261C9"),(QPalette.ToolTipBase,"#FFFFFF"),(QPalette.ToolTipText,"#172033")):p.setColor(role,QColor(color))
+    for role,color in ((QPalette.Window,"#F5F7FA"),(QPalette.WindowText,"#253044"),(QPalette.Base,"#FFFFFF"),(QPalette.Text,"#253044"),(QPalette.Button,"#FFFFFF"),(QPalette.ButtonText,"#253044"),(QPalette.Highlight,"#DDEBFF"),(QPalette.HighlightedText,"#1769D2"),(QPalette.ToolTipBase,"#FFFFFF"),(QPalette.ToolTipText,"#253044")):p.setColor(role,QColor(color))
     app.setPalette(p)
 def main():
-    QApplication.setAttribute(Qt.AA_DontUseNativeDialogs,True);app=QApplication(sys.argv);app.setStyle("Fusion");apply_light_palette(app);load_font();app.setApplicationName(APP_NAME);app.setApplicationVersion(APP_VERSION);app.setStyleSheet(FAST_STYLE);w=MainWindow();motion=MotionController(app);app.motion_controller=motion;motion.bind(w);w.show();return app.exec()
+    QApplication.setAttribute(Qt.AA_DontUseNativeDialogs,True);app=QApplication(sys.argv);app.setStyle(TactileProxyStyle("Fusion"));apply_light_palette(app);load_font();app.setApplicationName(APP_NAME);app.setApplicationVersion(APP_VERSION);app.setStyleSheet(FAST_STYLE);w=MainWindow();motion=MotionController(app);app.motion_controller=motion;motion.bind(w);w.show();return app.exec()

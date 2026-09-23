@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect, QLineEdit, QPushButton
+from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton
 
 from arterial_analysis.app_fast import APP_VERSION, MainWindow, NetworkDiagramWidget, build_network_graph
 from arterial_analysis.engine import SegmentInput
@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.4.1")
+        self.assertEqual(APP_VERSION,"1.5.0")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -45,17 +45,21 @@ class FastArterialUiTest(unittest.TestCase):
     def test_button_motion_has_tactile_press_and_release(self):
         controller=MotionController(APP,reduced_motion=False);button=QPushButton("확인")
         controller.press_button(button);QTest.qWait(controller.PRESS_MS+20)
-        self.assertIsInstance(button.graphicsEffect(),QGraphicsOpacityEffect)
-        self.assertLess(button.graphicsEffect().opacity(),0.8)
+        self.assertGreater(float(button.property("khcmPressProgress")),0.9)
+        self.assertIsNone(button.graphicsEffect())
         controller.release_button(button);QTest.qWait(controller.RELEASE_MS+30)
-        self.assertAlmostEqual(button.graphicsEffect().opacity(),1.0,places=2)
+        self.assertAlmostEqual(float(button.property("khcmPressProgress")),0.0,places=2)
+
+    def test_compact_detail_button_keeps_text_height(self):
+        button=self.table.cellWidget(0,16)
+        self.assertGreaterEqual(button.height(),button.fontMetrics().height()+4)
 
     def test_reduce_motion_finishes_immediately(self):
         controller=MotionController(APP,reduced_motion=True);button=QPushButton("확인")
         controller.press_button(button);QTest.qWait(5)
-        self.assertAlmostEqual(button.graphicsEffect().opacity(),controller.PRESS_OPACITY,places=2)
+        self.assertAlmostEqual(float(button.property("khcmPressProgress")),0.0,places=2)
         controller.release_button(button);QTest.qWait(5)
-        self.assertAlmostEqual(button.graphicsEffect().opacity(),1.0,places=2)
+        self.assertAlmostEqual(float(button.property("khcmPressProgress")),0.0,places=2)
 
     def test_integer_format_and_live_result(self):
         self.fill_row(0)

@@ -28,7 +28,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="도시교외간선도로분석_v1.4.1",
+    name="도시교외간선도로분석_v1.5.0",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
