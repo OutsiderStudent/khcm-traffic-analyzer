@@ -29,7 +29,7 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -954,5 +954,12 @@ def apply_light_palette(app):
     p=QPalette()
     for role,color in ((QPalette.Window,"#F5F7FA"),(QPalette.WindowText,"#253044"),(QPalette.Base,"#FFFFFF"),(QPalette.Text,"#253044"),(QPalette.Button,"#FFFFFF"),(QPalette.ButtonText,"#253044"),(QPalette.Highlight,"#DDEBFF"),(QPalette.HighlightedText,"#1769D2"),(QPalette.ToolTipBase,"#FFFFFF"),(QPalette.ToolTipText,"#253044")):p.setColor(role,QColor(color))
     app.setPalette(p)
+
+
+def enable_native_file_dialogs():
+    """Windows Explorer-style dialogs allow direct path paste and shell navigation."""
+    QApplication.setAttribute(Qt.AA_DontUseNativeDialogs, False)
+
+
 def main():
-    QApplication.setAttribute(Qt.AA_DontUseNativeDialogs,True);app=QApplication(sys.argv);app.setStyle(TactileProxyStyle("Fusion"));apply_light_palette(app);load_font();app.setApplicationName(APP_NAME);app.setApplicationVersion(APP_VERSION);app.setStyleSheet(FAST_STYLE);w=MainWindow();motion=MotionController(app);app.motion_controller=motion;motion.bind(w);w.show();return app.exec()
+    enable_native_file_dialogs();app=QApplication(sys.argv);app.setStyle(TactileProxyStyle("Fusion"));apply_light_palette(app);load_font();app.setApplicationName(APP_NAME);app.setApplicationVersion(APP_VERSION);app.setStyleSheet(FAST_STYLE);w=MainWindow();motion=MotionController(app);app.motion_controller=motion;motion.bind(w);w.show();return app.exec()

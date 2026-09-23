@@ -964,5 +964,5 @@ def apply_light_palette(app: QApplication) -> None:
 
 
 def main():
-    QApplication.setAttribute(Qt.AA_DontUseNativeDialogs,True)
+    QApplication.setAttribute(Qt.AA_DontUseNativeDialogs,False)
     app=QApplication(sys.argv);app.setStyle("Fusion");apply_light_palette(app);load_font();app.setApplicationName(APP_NAME);app.setApplicationVersion(APP_VERSION);app.setStyleSheet(STYLE);window=MainWindow();window.show();return app.exec()

@@ -9,7 +9,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QPushButton
 
-from arterial_analysis.app_fast import APP_VERSION, MainWindow, NetworkDiagramWidget, build_network_graph
+from arterial_analysis.app_fast import APP_VERSION, MainWindow, NetworkDiagramWidget, build_network_graph, enable_native_file_dialogs
 from arterial_analysis.engine import SegmentInput
 from arterial_analysis.motion import MotionController
 
@@ -35,12 +35,17 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.6.0")
+        self.assertEqual(APP_VERSION,"1.6.1")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
         self.assertEqual(self.table.item(0,13).text(),"1.00")
         self.assertEqual(self.table.item(0,9).text(),"유형III")
+
+    def test_windows_native_file_dialogs_are_enabled(self):
+        QApplication.setAttribute(Qt.AA_DontUseNativeDialogs, True)
+        enable_native_file_dialogs()
+        self.assertFalse(QApplication.testAttribute(Qt.AA_DontUseNativeDialogs))
 
     def test_button_motion_has_tactile_press_and_release(self):
         controller=MotionController(APP,reduced_motion=False);button=QPushButton("확인")
