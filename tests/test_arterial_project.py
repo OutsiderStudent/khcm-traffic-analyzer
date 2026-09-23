@@ -7,6 +7,11 @@ from arterial_analysis.reports import comparison_report, current_report
 
 
 class ArterialProjectTest(unittest.TestCase):
+    def test_phf_link_memo_and_change_log_survive_save_load(self):
+        project=ArterialProject();project.add_starter_rows();segment=project.segments[0];segment.phf_source_cell="H12";segment.phf_link_status="ok";project.tab_info("현황",project.current_year)["memo"]="현장 조사값 확인";project.add_log({"kind":"change","field":"PHF","old":1.0,"new":0.95})
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"project.ara1";project.save(path);loaded=ArterialProject.load(path)
+        self.assertEqual(loaded.segments[0].phf_source_cell,"H12");self.assertEqual(loaded.tab_info("현황",loaded.current_year)["memo"],"현장 조사값 확인");self.assertEqual(loaded.change_log[-1]["field"],"PHF")
     def test_save_load_and_scenario_copy(self):
         project = ArterialProject(current_year=2026, future_years=[2033, 2037])
         project.add_starter_rows()

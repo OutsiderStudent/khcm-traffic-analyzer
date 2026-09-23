@@ -64,8 +64,8 @@ class SegmentInput:
     report_volume: float | None = None
     phf: float = 1.0
     lanes: int = 2
-    functional_class: str = "중간규격"
-    road_condition_override: str = "자동"
+    functional_class: str = "저규격"
+    road_condition_override: str = "보통"
     arterial_type_override: str = "자동"
     bus_stops: int = 0
     access_points: int = 0
@@ -88,6 +88,12 @@ class SegmentInput:
     volume_link_status: str = ""
     volume_last_value: float | None = None
     volume_link_error: str = ""
+    phf_source_cell: str = ""
+    phf_source_path: str = ""
+    phf_source_sheet: str = ""
+    phf_link_status: str = ""
+    phf_last_value: float | None = None
+    phf_link_error: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SegmentInput":

@@ -21,6 +21,13 @@ class ArterialProject:
     segments: list[SegmentInput] = field(default_factory=list)
     source_note: str = "도로용량편람(2013) 제12장 및 제8장"
     analysis_tabs: list[dict[str, Any]] = field(default_factory=list)
+    change_log: list[dict[str, Any]] = field(default_factory=list)
+
+    def add_log(self, entry: dict[str, Any]) -> None:
+        """프로젝트 감사 이력은 최근 1,000건만 유지한다."""
+        self.change_log.append(dict(entry))
+        if len(self.change_log) > 1000:
+            del self.change_log[:-1000]
 
     @property
     def years(self) -> list[int]:
@@ -74,6 +81,8 @@ class ArterialProject:
                 if "main_volume" not in blanks:
                     blanks.append("main_volume")
                 data["blank_fields"] = blanks
+            if data.get("phf_source_cell"):
+                data["phf_link_status"] = "unconfirmed"
             copied.append(SegmentInput.from_dict(data))
         self.replace_rows(target_scenario, target_year, copied)
         return len(copied)
@@ -121,7 +130,7 @@ class ArterialProject:
     def to_dict(self) -> dict[str, Any]:
         return {
             "format": "arterial-analysis-project",
-            "version": 2,
+            "version": 3,
             "name": self.name,
             "current_year": self.current_year,
             "future_years": self.future_years,
@@ -129,6 +138,7 @@ class ArterialProject:
             "segments": [s.to_dict() for s in self.segments],
             "source_note": self.source_note,
             "analysis_tabs": self.analysis_tabs,
+            "change_log": self.change_log,
         }
 
     @classmethod
@@ -140,6 +150,7 @@ class ArterialProject:
             settings=AnalysisSettings.from_dict(data.get("settings")),
             source_note=str(data.get("source_note", "도로용량편람(2013) 제12장 및 제8장")),
             analysis_tabs=list(data.get("analysis_tabs", [])),
+            change_log=list(data.get("change_log", []))[-1000:],
         )
         project.segments = [SegmentInput.from_dict(row) for row in data.get("segments", [])]
         return project

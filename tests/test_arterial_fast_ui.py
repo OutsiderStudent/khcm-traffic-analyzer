@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel, QRect, Qt
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QPushButton, QStyleOptionViewItem
+from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QPushButton, QStyleOptionViewItem, QToolButton
 
 from arterial_analysis.app_fast import APP_VERSION, FAST_STYLE, MainWindow, NetworkDiagramWidget, build_network_graph, enable_native_file_dialogs
 from arterial_analysis.engine import SegmentInput
@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.6.3")
+        self.assertEqual(APP_VERSION,"1.7.0")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -71,6 +71,14 @@ class FastArterialUiTest(unittest.TestCase):
     def test_compact_detail_button_keeps_text_height(self):
         button=self.table.cellWidget(0,16)
         self.assertGreaterEqual(button.height(),button.fontMetrics().height()+4)
+
+    def test_history_toggle_is_hidden_while_drawer_is_open(self):
+        self.window.show();APP.processEvents();self.window.history_dock.show();APP.processEvents()
+        self.assertFalse(self.window.history_toggle.isVisible())
+        trash=self.window.findChild(QToolButton,"historyTrashButton");self.assertIsNotNone(trash);self.assertFalse(trash.icon().isNull())
+        collapse=self.window.findChild(QToolButton,"historyCollapseButton");self.assertIsNotNone(collapse);self.assertFalse(collapse.icon().isNull());self.assertEqual(collapse.text(),"")
+        self.window.history_dock.hide();APP.processEvents()
+        self.assertTrue(self.window.history_toggle.isVisible())
 
     def test_reduce_motion_finishes_immediately(self):
         controller=MotionController(APP,reduced_motion=True);button=QPushButton("확인")
@@ -156,25 +164,28 @@ class FastArterialUiTest(unittest.TestCase):
         self.assertEqual(self.table.item(0,11).text(),"100")
         self.assertEqual(self.table.item(0,13).text(),"1.00")
 
+    def test_same_arrival_shares_cycle_and_phf_link_metadata(self):
+        first,second=self.window.project.rows("현황",2026)[:2];first.end_number="9";first.end_name="도착";second.start_number="9";second.start_name="도착";first.cycle_s=90;first.phf=.93;first.phf_source_cell="H12";first.phf_link_status="ok"
+        self.page.load_key(("현황",2026));self.page.sync_arrival_values(first,10);self.page.sync_arrival_values(first,13)
+        self.assertEqual(second.cycle_s,90);self.assertEqual(second.phf,.93);self.assertEqual(second.phf_source_cell,"H12");self.assertEqual(self.table.item(1,13).text(),"0.93")
+
     def test_equal_shortcut_requests_excel_link_for_volume(self):
         self.table.linkRequested.disconnect();spy=QSignalSpy(self.table.linkRequested);self.table.setCurrentCell(0,12)
         QTest.keyClick(self.table,Qt.Key_Equal)
         self.assertEqual(spy.count(),1);self.assertEqual(spy.at(0),[0])
 
-    def test_excel_selection_is_captured_before_enter_moves_cell(self):
-        self.page._enter_was_down=False;self.page._pending_selection=None
-        selected=(r"C:\traffic.xlsx","현황2026","B12",True)
-        with patch("arterial_analysis.app_fast.ctypes.windll.user32.GetAsyncKeyState",return_value=0),patch("arterial_analysis.app_fast.active_selection",return_value=selected):
+    def test_excel_selection_is_not_polled_until_enter(self):
+        self.page._enter_was_down=False;self.page._escape_was_down=False
+        with patch("arterial_analysis.app_fast.ctypes.windll.user32.GetAsyncKeyState",return_value=0),patch("arterial_analysis.app_fast.active_selection") as selected:
             self.page.poll_link()
-        self.assertEqual(self.page._pending_selection,selected)
+        selected.assert_not_called()
 
-    def test_unsaved_excel_uses_last_saved_disk_value_without_modal_loop(self):
-        self.page._link_table=self.table;self.page._link_row=0;self.page._enter_was_down=True
-        self.page._pending_selection=(__file__,"Sheet1","B12",False);self.page._link_timer=Mock()
-        with patch("arterial_analysis.app_fast.ctypes.windll.user32.GetAsyncKeyState",return_value=0),patch("arterial_analysis.app_fast.read_saved_cell",return_value=(1234,"B12")):
+    def test_unsaved_excel_waits_for_save_without_modal_loop(self):
+        self.page._link_table=self.table;self.page._link_row=0;self.page._link_col=12;self.page._enter_was_down=True;self.page._escape_was_down=False;self.page._link_timer=Mock()
+        with patch("arterial_analysis.app_fast.ctypes.windll.user32.GetAsyncKeyState",return_value=0),patch("arterial_analysis.app_fast.active_selection",return_value=(__file__,"Sheet1","B12",False)),patch("arterial_analysis.app_fast.read_saved_cell") as reader:
             self.page.poll_link()
-        segment=self.window.project.rows("현황",2026)[0]
-        self.assertEqual(segment.main_volume,1234);self.assertEqual(segment.volume_link_status,"last_saved")
+        reader.assert_not_called();segment=self.window.project.rows("현황",2026)[0]
+        self.assertNotEqual(segment.main_volume,1234);self.assertIn("저장",self.page.formula.placeholderText())
 
     def test_f5_reads_same_workbook_once_for_multiple_links(self):
         info=self.window.project.tab_info("현황",2026);info.update(source_path=__file__,source_sheet="Sheet1")

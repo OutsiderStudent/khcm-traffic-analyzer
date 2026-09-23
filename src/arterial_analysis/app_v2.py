@@ -755,6 +755,7 @@ class ResultsPage(QWidget):
         root = QVBoxLayout(self); root.setContentsMargins(16, 14, 16, 14)
         hero_row=QHBoxLayout(); self.hero = QLabel(); self.hero.setObjectName("resultHero"); self.hero.setWordWrap(True); hero_row.addWidget(self.hero,1); self.copy_hero=QPushButton("문구 복사"); self.copy_hero.setObjectName("primaryButton"); hero_row.addWidget(self.copy_hero); root.addLayout(hero_row)
         self.save_notice=QLabel("분석 결과를 확인한 뒤 프로젝트를 저장해 주세요."); self.save_notice.setObjectName("saveNotice"); root.addWidget(self.save_notice)
+        self.link_warning=QLabel();self.link_warning.setObjectName("linkWarning");self.link_warning.setWordWrap(True);self.link_warning.hide();root.addWidget(self.link_warning)
         self.tabs = QTabBar(); self.tabs.setExpanding(False); self.tabs.setDrawBase(False); root.addWidget(self.tabs)
         hint = QHBoxLayout(); copy_note = QLabel("표 범위를 선택한 뒤 Ctrl+C로 한글 표에 붙여넣을 수 있습니다. 평균통행속도 셀을 더블클릭하면 근거를 남기고 조정할 수 있습니다."); copy_note.setObjectName("copyNote"); hint.addWidget(copy_note); hint.addStretch(); root.addLayout(hint)
         self.table = CopyableTable(); root.addWidget(make_card("2. 분석 결과", self.table), 1)
@@ -762,7 +763,14 @@ class ResultsPage(QWidget):
         self.tabs.currentChanged.connect(self.show_tab); self.copy_hero.clicked.connect(lambda:QGuiApplication.clipboard().setText(self.hero.text())); self.table.itemDoubleClicked.connect(self.edit_speed)
 
     def refresh(self, project: ArterialProject, results: list[AnalysisResult]) -> None:
-        self.project, self.results = project, results; self.tabs.blockSignals(True); clear_tab_bar(self.tabs)
+        self.project, self.results = project, results
+        errors=[]
+        for segment in project.segments:
+            for field,label in (("volume_link_error","교통량"),("phf_link_error","PHF")):
+                if getattr(segment,field,""):errors.append(f"{segment.road_name} {segment.direction} {label}")
+        if errors:self.link_warning.setText(f"주의: Excel 연결 오류 {len(errors)}건은 마지막 정상값으로 분석했습니다. 입력표에서 연결 상태를 확인하세요. · "+" / ".join(errors[:5]));self.link_warning.show()
+        else:self.link_warning.hide()
+        self.tabs.blockSignals(True); clear_tab_bar(self.tabs)
         for key in project.tab_keys():
             index = self.tabs.addTab(f"{SCENARIO_LABEL[key[0]]}({key[1]})"); self.tabs.setTabData(index, ("scenario", *key))
             self.tabs.setTabTextColor(index,{"현황":QColor("#475569"),"사업 미시행시":QColor("#2563EB"),"사업 시행시":QColor("#059669"),"개선대책 이행시":QColor("#D97706")}[key[0]])
@@ -803,6 +811,11 @@ class ResultsPage(QWidget):
                 if result and result.segment.manual_speed_kmh is not None and self.table.item(row,9):
                     history=result.segment.speed_adjustment_history[-1] if result.segment.speed_adjustment_history else {}
                     self.table.item(row,9).setToolTip(f"수동조정 · 원계산 {result.calculated_speed_kmh:.1f} km/h\n{history.get('changed_at','')}\n{history.get('reason','')}")
+                if result and (getattr(result.segment,"volume_link_error","") or getattr(result.segment,"phf_link_error","")):
+                    message="\n".join(x for x in (getattr(result.segment,"volume_link_error",""),getattr(result.segment,"phf_link_error","")) if x)
+                    for column in range(self.table.columnCount()):
+                        cell=self.table.item(row,column)
+                        if cell:cell.setBackground(QColor("#FFECEC"));cell.setToolTip(message)
 
     def update_hero(self) -> None:
         if not self.scope: self.hero.setText("분석할 구간이 없습니다."); return
