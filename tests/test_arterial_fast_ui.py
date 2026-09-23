@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.7.5")
+        self.assertEqual(APP_VERSION,"1.7.6")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -123,6 +123,11 @@ class FastArterialUiTest(unittest.TestCase):
             self.assertEqual(self.table.frozen.rowSpan(0,column),2)
         for column in (4,7,8,9,10,11,12,13):
             self.assertEqual(self.table.rowSpan(0,column),1)
+
+    def test_frozen_columns_do_not_follow_current_cell_horizontally(self):
+        self.window.show();self.page.toggle_optional();self.table.setCurrentCell(0,20);self.table.scrollToItem(self.table.item(0,20));APP.processEvents()
+        self.assertGreater(self.table.horizontalScrollBar().value(),0);self.assertEqual(self.table.frozen.horizontalScrollBar().value(),0);self.assertEqual(self.table.frozen.columnViewportPosition(0),0);self.assertEqual(self.table.frozen.columnViewportPosition(1),self.table.frozen.columnWidth(0))
+        self.assertEqual(self.table.frozen.horizontalHeader().offset(),0)
 
     def test_internal_road_visibility(self):
         self.assertFalse(self.page.road_tabs.isTabVisible(1))

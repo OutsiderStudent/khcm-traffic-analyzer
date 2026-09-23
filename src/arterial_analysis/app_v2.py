@@ -159,16 +159,38 @@ class CenterCheckDelegate(QStyledItemDelegate):
         state=index.data(Qt.CheckStateRole); checked=state in (Qt.Checked,Qt.CheckState.Checked,2); model.setData(index,Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked,Qt.CheckStateRole); return True
 
 
+class FrozenColumnsView(QTableView):
+    """고정 열 뷰가 공유 선택모델을 따라 옆으로 이동하지 않게 한다."""
+
+    def __init__(self,freeze_count,parent=None):
+        super().__init__(parent);self.freeze_count=freeze_count
+
+    def scrollTo(self,index,hint=QAbstractItemView.EnsureVisible):
+        if index.isValid() and index.column()<self.freeze_count:super().scrollTo(index,hint)
+        self.anchor_horizontal()
+        QTimer.singleShot(0,self.anchor_horizontal)
+
+    def anchor_horizontal(self):
+        if self.horizontalScrollBar().value():self.horizontalScrollBar().setValue(0)
+        if self.horizontalHeader().offset():self.horizontalHeader().setOffset(0)
+
+
 class FrozenInputTable(QTableWidget):
     """교차로명까지 7개 열을 엑셀의 틀 고정처럼 유지한다."""
 
     def __init__(self,rows,columns,freeze_count=7,parent=None):
-        super().__init__(rows,columns,parent); self.freeze_count=freeze_count; self.frozen=QTableView(self); self.frozen.setModel(self.model()); self.frozen.setSelectionModel(self.selectionModel())
+        super().__init__(rows,columns,parent); self.freeze_count=freeze_count; self.frozen=FrozenColumnsView(freeze_count,self); self.frozen.setModel(self.model()); self.frozen.setSelectionModel(self.selectionModel())
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn); self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.frozen.setFrameShape(QFrame.NoFrame); self.frozen.setStyleSheet("QTableView{border:0;border-right:2px solid #AEB9C8;background:white;}")
         self.frozen.verticalHeader().hide(); self.frozen.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.frozen.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.frozen.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel); self.frozen.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel); self.frozen.setEditTriggers(QAbstractItemView.AllEditTriggers)
         for col in range(columns): self.frozen.setColumnHidden(col,col>=freeze_count)
-        self.frozen.show(); self.frozen.raise_(); self.verticalScrollBar().valueChanged.connect(self.frozen.verticalScrollBar().setValue); self.frozen.verticalScrollBar().valueChanged.connect(self.verticalScrollBar().setValue); self.horizontalHeader().sectionResized.connect(self._sync_width)
+        self.frozen.show(); self.frozen.raise_(); self.verticalScrollBar().valueChanged.connect(self.frozen.verticalScrollBar().setValue); self.frozen.verticalScrollBar().valueChanged.connect(self.verticalScrollBar().setValue); self.frozen.horizontalScrollBar().valueChanged.connect(self._lock_frozen_horizontal); self.horizontalScrollBar().valueChanged.connect(self._lock_frozen_horizontal); self.horizontalHeader().sectionResized.connect(self._sync_width)
+
+    def _lock_frozen_horizontal(self,value):
+        # QTableView can leave the header offset behind after the shared current
+        # index moves to a column outside the frozen block.  Keep the header and
+        # body anchored together at the first column.
+        self.frozen.anchor_horizontal()
 
     def set_shared_delegate(self,column,delegate):
         """각 뷰에 별도 delegate를 둬 고정 영역 편집기가 즉시 닫히지 않게 한다."""
@@ -191,6 +213,10 @@ class FrozenInputTable(QTableWidget):
         # Include the frozen view's trailing grid line.  Subtracting a pixel clipped
         # the first/last glyph at some Windows display scales.
         self.frozen.setGeometry(self.frameWidth(),self.frameWidth(),max(0,width+2),max(header_h,height))
+        self._lock_frozen_horizontal(self.frozen.horizontalScrollBar().value())
+        # The application replaces the main header after this view is created.
+        # Keep the frozen header above that newer widget as well as the body.
+        self.frozen.raise_()
 
     def resizeEvent(self,event): super().resizeEvent(event); self._update_frozen_geometry()
 
