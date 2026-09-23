@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -9,12 +11,26 @@ from arterial_analysis.excel_links import (
     list_sheets,
     parse_external_formula,
     normalize_expression,
+    open_link_window,
+    close_link_window,
     read_saved_cells,
     read_saved_expressions,
 )
 
 
 class ExcelLinksTest(unittest.TestCase):
+    def test_link_window_disables_excel_enter_move_and_restores_it(self):
+        path=str((Path(tempfile.gettempdir())/"traffic.xlsx").resolve())
+        window=SimpleNamespace(Hwnd=321,Caption="traffic.xlsx",WindowState=0,Activate=Mock(),Close=Mock())
+        workbook=SimpleNamespace(FullName=path,NewWindow=Mock(return_value=window),Windows=[window],Saved=True)
+        excel=SimpleNamespace(MoveAfterReturn=True,Workbooks=[workbook],Visible=False)
+        pythoncom=SimpleNamespace(CoInitialize=Mock(),CoUninitialize=Mock());client=SimpleNamespace(Dispatch=Mock(return_value=excel),GetActiveObject=Mock(return_value=excel))
+        with patch("arterial_analysis.excel_links._excel_modules",return_value=(pythoncom,client)):
+            token=open_link_window(path)
+            self.assertFalse(excel.MoveAfterReturn);self.assertTrue(token["move_after_return"])
+            close_link_window(token)
+        self.assertTrue(excel.MoveAfterReturn);window.Close.assert_called_once()
+
     def test_external_formula_round_trip(self):
         path = str((Path(tempfile.gettempdir()) / "교통량 자료.xlsx").resolve())
         formula = format_external_formula(path, "미시행 2033", "h17")

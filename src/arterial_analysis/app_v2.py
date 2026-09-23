@@ -84,7 +84,7 @@ def load_font() -> None:
 
 def make_card(title: str, child: QWidget) -> QFrame:
     frame = QFrame(); frame.setObjectName("card")
-    layout = QVBoxLayout(frame); layout.setContentsMargins(18, 14, 18, 16)
+    layout = QVBoxLayout(frame); layout.setContentsMargins(16, 11, 16, 13); layout.setSpacing(6)
     heading = QLabel(title); heading.setObjectName("cardTitle")
     layout.addWidget(heading); layout.addWidget(child)
     return frame
@@ -187,7 +187,9 @@ class FrozenInputTable(QTableWidget):
         width=sum(self.columnWidth(col) for col in range(self.freeze_count))
         header_h=self.horizontalHeader().height(); rows_h=sum(self.rowHeight(row) for row in range(self.rowCount()))
         height=min(self.viewport().height()+header_h,header_h+rows_h+1)
-        self.frozen.setGeometry(self.frameWidth(),self.frameWidth(),max(0,width-1),max(header_h,height))
+        # Include the frozen view's trailing grid line.  Subtracting a pixel clipped
+        # the first/last glyph at some Windows display scales.
+        self.frozen.setGeometry(self.frameWidth(),self.frameWidth(),max(0,width+1),max(header_h,height))
 
     def resizeEvent(self,event): super().resizeEvent(event); self._update_frozen_geometry()
 
@@ -327,7 +329,7 @@ class InputPage(QWidget):
 
     def __init__(self, project: ArterialProject) -> None:
         super().__init__(); self.project = project; self.current_key: tuple[str, int] | None = None; self._changing_tabs = False; self._segment_clipboard: list[dict] = []
-        root = QVBoxLayout(self); root.setContentsMargins(16, 14, 16, 14)
+        root = QVBoxLayout(self); root.setContentsMargins(14, 10, 14, 10); root.setSpacing(6)
         title = QLabel("상황·연도별 분석구간을 입력해 주세요"); title.setObjectName("pageTitle"); root.addWidget(title)
         self.analysis_tabs = EditableTabBar(); self.analysis_tabs.setExpanding(False); self.analysis_tabs.setDrawBase(False); self.analysis_tabs.setTabsClosable(False)
         self.analysis_tabs.setToolTip("+ 탭으로 상황·연도를 추가하고, 선택된 탭 문구를 클릭하면 연도를 변경할 수 있습니다.")
@@ -412,10 +414,11 @@ class InputPage(QWidget):
             self.analysis_tabs.setTabData(index, key)
             self.analysis_tabs.setTabTextColor(index,{"현황":QColor("#475569"),"사업 미시행시":QColor("#2563EB"),"사업 시행시":QColor("#059669"),"개선대책 이행시":QColor("#D97706")}[key[0]])
             if key[0]!="현황":
-                close=QToolButton(self.analysis_tabs); close.setText("×"); close.setObjectName("tabCloseButton"); close.setFixedSize(18,22); close.setCursor(Qt.PointingHandCursor); close.setToolTip("탭 삭제")
+                close=QToolButton(self.analysis_tabs); close.setText("×"); close.setObjectName("tabCloseButton"); close.setFixedSize(22,22); close.setCursor(Qt.PointingHandCursor); close.setToolTip("탭 삭제")
                 close.clicked.connect(lambda _=False,k=key:self._delete_analysis_key(k)); self.analysis_tabs.setTabButton(index,QTabBar.ButtonPosition.RightSide,close)
-        plus = self.analysis_tabs.addTab("+"); self.analysis_tabs.setTabData(plus, None)
-        self.analysis_tabs.setTabButton(plus,QTabBar.ButtonPosition.RightSide,None)
+        plus = self.analysis_tabs.addTab(""); self.analysis_tabs.setTabData(plus, None)
+        add=QToolButton(self.analysis_tabs); add.setText("+"); add.setObjectName("tabAddButton"); add.setFixedSize(22,22); add.setCursor(Qt.PointingHandCursor); add.setToolTip("분석 탭 추가")
+        add.clicked.connect(lambda _=False,index=plus:self.analysis_tabs.setCurrentIndex(index)); self.analysis_tabs.setTabButton(plus,QTabBar.ButtonPosition.RightSide,add)
         target = next((i for i, key in enumerate(keys) if key == current), 0)
         self.analysis_tabs.setCurrentIndex(target); self._changing_tabs = False
         if keys:
@@ -752,7 +755,7 @@ class ResultsPage(QWidget):
     changed = Signal()
     def __init__(self) -> None:
         super().__init__(); self.project=None; self.results=[]; self.current_spec=None; self.scope=[]
-        root = QVBoxLayout(self); root.setContentsMargins(16, 14, 16, 14)
+        root = QVBoxLayout(self); root.setContentsMargins(14, 10, 14, 10); root.setSpacing(6)
         hero_row=QHBoxLayout(); self.hero = QLabel(); self.hero.setObjectName("resultHero"); self.hero.setWordWrap(True); hero_row.addWidget(self.hero,1); self.copy_hero=QPushButton("문구 복사"); self.copy_hero.setObjectName("primaryButton"); hero_row.addWidget(self.copy_hero); root.addLayout(hero_row)
         self.save_notice=QLabel("분석 결과를 확인한 뒤 프로젝트를 저장해 주세요."); self.save_notice.setObjectName("saveNotice"); root.addWidget(self.save_notice)
         self.link_warning=QLabel();self.link_warning.setObjectName("linkWarning");self.link_warning.setWordWrap(True);self.link_warning.hide();root.addWidget(self.link_warning)
@@ -840,7 +843,7 @@ class ResultsPage(QWidget):
 class DetailPage(QWidget):
     def __init__(self) -> None:
         super().__init__(); self.project=None; self.results=[]; self.current_spec=None
-        root=QVBoxLayout(self); root.setContentsMargins(16,14,16,14)
+        root=QVBoxLayout(self); root.setContentsMargins(14,10,14,10); root.setSpacing(6)
         title=QLabel("부록용 세부 계산결과"); title.setObjectName("pageTitle"); root.addWidget(title)
         self.tabs=QTabBar(); self.tabs.setExpanding(False); self.tabs.setDrawBase(False); root.addWidget(self.tabs)
         note_row=QHBoxLayout(); note=QLabel("세부 계산표는 셀 복사와 고해상도 이미지 복사를 지원합니다. V는 계산에 사용한 주이동류 교통량입니다."); note.setObjectName("infoBar"); note_row.addWidget(note,1); self.copy_image=QPushButton("부록 이미지 복사"); self.copy_image.setObjectName("primaryButton"); note_row.addWidget(self.copy_image); root.addLayout(note_row)
@@ -897,7 +900,7 @@ class Workflow(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__(); load_font(); self.project=ArterialProject(); self.project.add_starter_rows(); self.path=None
-        self.dirty=False; self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}"); self.resize(1280,820); self.setMinimumSize(900,650)
+        self.dirty=False; self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}"); self.resize(1152,738); self.setMinimumSize(850,590)
         icon=resource_path("assets/arterial-analysis-icon.ico")
         if Path(icon).exists():self.setWindowIcon(QIcon(icon))
         self.tabs=QTabWidget(); self.workflow=Workflow(self.project); self.tabs.addTab(self.workflow,"분석"); self.tabs.addTab(GuidelinePage(),"지침·공식"); self.setCentralWidget(self.tabs)
@@ -952,19 +955,19 @@ class MainWindow(QMainWindow):
 
 COMBO_ARROW=resource_path("assets/combo-chevron.svg").replace("\\","/")
 STYLE="""
-QWidget{font-family:"Noto Sans KR","Malgun Gothic";font-size:10pt;color:#253044} QMainWindow,QStackedWidget{background:#F5F7FA}
+QWidget{font-family:"Noto Sans KR","Malgun Gothic";font-size:9pt;color:#253044} QMainWindow,QStackedWidget{background:#F5F7FA}
 QDialog,QMessageBox,QFileDialog{background:#F5F7FA;color:#172033} QDialog QLabel,QMessageBox QLabel,QFileDialog QLabel{color:#172033;background:transparent} QTextEdit{background:white;color:#172033;border:1px solid #CBD6E4;border-radius:7px;padding:6px}
-QMenuBar{background:white;color:#253044;padding:4px 8px} QMenuBar::item{background:transparent;color:#253044;padding:6px 10px} QMenuBar::item:selected{background:#F0F5FF;color:#1769D2;border-radius:5px} QMenu{background:white;color:#253044;border:1px solid #DDE3EC;padding:5px} QMenu::item{background:transparent;color:#253044;padding:7px 28px 7px 10px;border-radius:4px} QMenu::item:selected{background:#F0F5FF;color:#1769D2}
-QTabWidget::pane{border:0} QTabBar{background:transparent;border:0} QTabBar::tear{width:0;height:0} QTabBar::tab{background:white;padding:9px 12px;color:#657087;border:0;border-bottom:3px solid transparent} QTabBar::tab:selected{color:#1769D2;font-weight:700;border-bottom:3px solid #2375E8} QToolButton#tabCloseButton{background:transparent;border:0;padding:0;margin:0 4px 0 1px;color:#64748B;font-size:12pt;font-weight:600} QToolButton#tabCloseButton:hover{color:#C62828;background:#FEECEC;border-radius:7px}
-QFrame#card{background:white;border:1px solid #E0E6EE;border-radius:12px} QLabel#cardTitle{font-size:12pt;font-weight:800;color:#172033} QLabel#pageTitle{font-size:18pt;font-weight:800;color:#172033;padding:3px 0 5px} QLabel#infoBar{background:#FFF8E6;color:#8A5A00;border-radius:8px;padding:9px 12px} QLabel#changeNotice{background:#FFE8D5;color:#9A3E00;border:1px solid #FFB779;border-radius:8px;padding:8px 11px} QLabel#copyNote{color:#526079;padding:4px}
-QLabel#stepBar{background:white;color:#64748B;padding:13px 20px;border-bottom:1px solid #E7EBF0} QLabel#resultHero{background:#EAF2FF;border:1px solid #2375E8;border-radius:16px;color:#1769D2;font-size:13pt;font-weight:800;padding:16px 20px}
+QMenuBar{background:white;color:#253044;padding:3px 7px} QMenuBar::item{background:transparent;color:#253044;padding:5px 9px} QMenuBar::item:selected{background:#F0F5FF;color:#1769D2;border-radius:5px} QMenu{background:white;color:#253044;border:1px solid #DDE3EC;padding:4px} QMenu::item{background:transparent;color:#253044;padding:6px 25px 6px 9px;border-radius:4px} QMenu::item:selected{background:#F0F5FF;color:#1769D2}
+QTabWidget::pane{border:0;border-top:1px solid #D7E0EA} QTabBar{background:transparent;border:0} QTabBar::tear{width:0;height:0} QTabBar::tab{background:#F7F9FC;padding:7px 10px;margin-right:3px;color:#657087;border:1px solid #D8E1EC;border-bottom:2px solid #C8D3E0;border-top-left-radius:8px;border-top-right-radius:8px} QTabBar::tab:hover{background:#EEF4FD;border-color:#AFC5E2} QTabBar::tab:selected{background:white;color:#1769D2;font-weight:700;border-color:#8CB9F5;border-bottom:3px solid #2375E8} QToolButton#tabCloseButton,QToolButton#tabAddButton{background:transparent;border:0;padding:0;margin:0 3px 0 1px;color:#64748B;font-size:11pt;font-weight:700} QToolButton#tabAddButton{font-size:12pt;color:#1769D2} QToolButton#tabCloseButton:hover{color:#C62828;background:#FEECEC;border-radius:7px} QToolButton#tabAddButton:hover{color:#0F5DBD;background:#DCEAFF;border-radius:7px}
+QFrame#card{background:white;border:1px solid #E0E6EE;border-radius:10px} QLabel#cardTitle{font-size:11pt;font-weight:800;color:#172033} QLabel#pageTitle{font-size:16pt;font-weight:800;color:#172033;padding:2px 0 3px} QLabel#infoBar{background:#FFF8E6;color:#8A5A00;border-radius:7px;padding:7px 10px} QLabel#changeNotice{background:#FFE8D5;color:#9A3E00;border:1px solid #FFB779;border-radius:7px;padding:7px 10px} QLabel#copyNote{color:#526079;padding:3px}
+QLabel#stepBar{background:white;color:#64748B;padding:10px 16px;border-bottom:1px solid #E7EBF0} QLabel#resultHero{background:#EAF2FF;border:1px solid #2375E8;border-radius:13px;color:#1769D2;font-size:12pt;font-weight:800;padding:12px 16px}
 QLabel#saveNotice{background:#FFF7D6;color:#8A5800;border:1px solid #F2D681;border-radius:8px;padding:7px 11px}
-QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox{background:white;color:#253044;border:1px solid #CFD7E3;border-radius:7px;padding:5px 30px 5px 8px;min-height:20px} QLineEdit{padding-right:8px} QSpinBox,QDoubleSpinBox{padding-right:8px} QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus,QComboBox:focus{border:2px solid #2375E8;background:white} QComboBox::drop-down{subcontrol-origin:padding;subcontrol-position:top right;width:28px;border-left:1px solid #D8E0E9;border-top-right-radius:7px;border-bottom-right-radius:7px;background:#F7FAFC} QComboBox::drop-down:hover{background:#EAF2FF} QComboBox::down-arrow{image:url("__COMBO_ARROW__");width:12px;height:8px} QComboBox QAbstractItemView{background:white;color:#253044;border:1px solid #9FB2C8;selection-background-color:#DDEBFF;selection-color:#1769D2;outline:0;padding:3px} QSpinBox::up-button,QSpinBox::down-button,QDoubleSpinBox::up-button,QDoubleSpinBox::down-button{width:0;height:0;border:0}
-QPushButton{background:white;border:1px solid #DDE3EC;border-radius:9px;padding:7px 12px;font-weight:700} QPushButton:hover{background:#F0F5FF;border-color:#8CB9F5} QPushButton:pressed{background:#DCEAFF;border-color:#2375E8} QPushButton:focus{border:2px solid #2375E8} QPushButton#primaryButton{background:#2375E8;color:white;border-color:#2375E8;padding:8px 18px}
-QPushButton#detailButton{background:#2375E8;color:white;border-color:#2375E8;padding:5px 8px} QPushButton#reviewButton{background:#FFF4DD;color:#9A4D00;border-color:#F2B96D;padding:4px 7px}
-QTableWidget{background:white;alternate-background-color:#F8FAFD;border:1px solid #D8E0EA;border-radius:9px;gridline-color:#D8E0EA;selection-background-color:#DDEBFF;selection-color:#1769D2} QTableWidget::item{border-bottom:1px solid #E1E6ED;padding:5px;font-weight:600} QHeaderView::section{background:#E9EEF5;color:#253044;border:0;border-right:1px solid #CED7E2;border-bottom:1px solid #C7D1DE;padding:7px 5px;font-weight:800;text-align:center}
-QScrollBar:horizontal{background:#EEF2F6;height:14px;margin:0;border:0;border-radius:7px} QScrollBar::handle:horizontal{background:#9EACBC;min-width:48px;border-radius:7px;margin:2px} QScrollBar::handle:horizontal:hover{background:#6F8298} QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;border:0;background:transparent} QScrollBar::add-page:horizontal,QScrollBar::sub-page:horizontal{background:transparent}
-QScrollBar:vertical{background:#EEF2F6;width:13px;margin:0;border:0;border-radius:6px} QScrollBar::handle:vertical{background:#9EACBC;min-height:38px;border-radius:6px;margin:2px} QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;border:0;background:transparent} QStatusBar{background:white;color:#536273}
+QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox{background:white;color:#253044;border:1px solid #CFD7E3;border-radius:6px;padding:4px 27px 4px 7px;min-height:18px} QLineEdit{padding-right:7px} QSpinBox,QDoubleSpinBox{padding-right:7px} QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus,QComboBox:focus{border:2px solid #2375E8;background:white} QComboBox::drop-down{subcontrol-origin:padding;subcontrol-position:top right;width:25px;border-left:1px solid #D8E0E9;border-top-right-radius:6px;border-bottom-right-radius:6px;background:#F7FAFC} QComboBox::drop-down:hover{background:#EAF2FF} QComboBox::down-arrow{image:url("__COMBO_ARROW__");width:11px;height:7px} QComboBox QAbstractItemView{background:white;color:#253044;border:1px solid #9FB2C8;selection-background-color:#DDEBFF;selection-color:#1769D2;outline:0;padding:2px} QSpinBox::up-button,QSpinBox::down-button,QDoubleSpinBox::up-button,QDoubleSpinBox::down-button{width:0;height:0;border:0}
+QPushButton{background:white;border:1px solid #DDE3EC;border-radius:8px;padding:6px 10px;font-weight:700} QPushButton:hover{background:#F0F5FF;border-color:#8CB9F5} QPushButton:pressed{background:#DCEAFF;border-color:#2375E8} QPushButton:focus{border:2px solid #2375E8} QPushButton#primaryButton{background:#2375E8;color:white;border-color:#2375E8;padding:7px 15px}
+QPushButton#detailButton{background:#2375E8;color:white;border-color:#2375E8;padding:4px 7px} QPushButton#reviewButton{background:#FFF4DD;color:#9A4D00;border-color:#F2B96D;padding:3px 6px}
+QTableWidget{background:white;alternate-background-color:#F8FAFD;border:1px solid #D8E0EA;border-radius:8px;gridline-color:#D8E0EA;selection-background-color:#DDEBFF;selection-color:#1769D2} QTableWidget::item{border-bottom:1px solid #E1E6ED;padding:4px;font-weight:600} QHeaderView::section{background:#E9EEF5;color:#253044;border:0;border-right:1px solid #CED7E2;border-bottom:1px solid #C7D1DE;padding:5px 4px;font-weight:800;text-align:center}
+QScrollBar:horizontal{background:#EEF2F6;height:12px;margin:0;border:0;border-radius:6px} QScrollBar::handle:horizontal{background:#9EACBC;min-width:43px;border-radius:6px;margin:2px} QScrollBar::handle:horizontal:hover{background:#6F8298} QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;border:0;background:transparent} QScrollBar::add-page:horizontal,QScrollBar::sub-page:horizontal{background:transparent}
+QScrollBar:vertical{background:#EEF2F6;width:12px;margin:0;border:0;border-radius:6px} QScrollBar::handle:vertical{background:#9EACBC;min-height:34px;border-radius:6px;margin:2px} QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;border:0;background:transparent} QStatusBar{background:white;color:#536273}
 """.replace("__COMBO_ARROW__",COMBO_ARROW)
 
 

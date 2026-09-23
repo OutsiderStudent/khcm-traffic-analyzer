@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.7.0")
+        self.assertEqual(APP_VERSION,"1.7.1")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -175,17 +175,25 @@ class FastArterialUiTest(unittest.TestCase):
         self.assertEqual(spy.count(),1);self.assertEqual(spy.at(0),[0])
 
     def test_excel_selection_is_not_polled_until_enter(self):
-        self.page._enter_was_down=False;self.page._escape_was_down=False
-        with patch("arterial_analysis.app_fast.ctypes.windll.user32.GetAsyncKeyState",return_value=0),patch("arterial_analysis.app_fast.active_selection") as selected:
+        self.page._link_window={"hwnd":123};self.page._enter_was_down=False;self.page._escape_was_down=False
+        with patch("arterial_analysis.app_fast.ctypes.windll.user32.IsWindow",return_value=True),patch("arterial_analysis.app_fast.ctypes.windll.user32.GetAsyncKeyState",return_value=0),patch("arterial_analysis.app_fast.active_selection") as selected:
             self.page.poll_link()
         selected.assert_not_called()
 
     def test_unsaved_excel_waits_for_save_without_modal_loop(self):
-        self.page._link_table=self.table;self.page._link_row=0;self.page._link_col=12;self.page._enter_was_down=True;self.page._escape_was_down=False;self.page._link_timer=Mock()
-        with patch("arterial_analysis.app_fast.ctypes.windll.user32.GetAsyncKeyState",return_value=0),patch("arterial_analysis.app_fast.active_selection",return_value=(__file__,"Sheet1","B12",False)),patch("arterial_analysis.app_fast.read_saved_cell") as reader:
+        self.page._link_table=self.table;self.page._link_row=0;self.page._link_col=12;self.page._link_window={"hwnd":123};self.page._enter_was_down=True;self.page._escape_was_down=False;self.page._link_timer=Mock()
+        with patch("arterial_analysis.app_fast.ctypes.windll.user32.IsWindow",return_value=True),patch("arterial_analysis.app_fast.ctypes.windll.user32.GetAsyncKeyState",return_value=0),patch("arterial_analysis.app_fast.active_selection",return_value=(__file__,"Sheet1","B12",False)),patch("arterial_analysis.app_fast.read_saved_cell") as reader:
             self.page.poll_link()
         reader.assert_not_called();segment=self.window.project.rows("현황",2026)[0]
         self.assertNotEqual(segment.main_volume,1234);self.assertIn("저장",self.page.formula.placeholderText())
+
+    def test_manually_closed_excel_window_ends_link_mode(self):
+        timer=Mock();self.page._link_timer=timer;self.page._link_window={"hwnd":123};self.page._link_table=self.table;self.page._link_row=0;self.page._link_col=12
+        with patch("arterial_analysis.app_fast.ctypes.windll.user32.IsWindow",return_value=False),patch("arterial_analysis.app_fast.close_link_window"):
+            self.page.poll_link()
+        timer.stop.assert_called_once();timer.deleteLater.assert_called_once()
+        self.assertIsNone(self.page._link_timer);self.assertIsNone(self.page._link_window);self.assertIsNone(self.page._link_table)
+        self.assertIn("다시 연결",self.page.formula.placeholderText())
 
     def test_f5_reads_same_workbook_once_for_multiple_links(self):
         info=self.window.project.tab_info("현황",2026);info.update(source_path=__file__,source_sheet="Sheet1")
@@ -236,7 +244,13 @@ class FastArterialUiTest(unittest.TestCase):
     def test_narrow_metric_headers_are_wrapped_without_long_lines(self):
         for header in self.page.HEADERS[7:]:
             self.assertLessEqual(max(map(len,header.splitlines())),6)
-        self.assertGreaterEqual(self.table.horizontalHeader().height(),94)
+        self.assertGreaterEqual(self.table.horizontalHeader().height(),84)
+
+    def test_analysis_tab_close_and_add_controls_are_same_size(self):
+        self.window.project.ensure_tab("사업 미시행시",2033);self.page.refresh_tabs(("사업 미시행시",2033))
+        close=self.page.analysis_tabs.findChild(QToolButton,"tabCloseButton");add=self.page.analysis_tabs.findChild(QToolButton,"tabAddButton")
+        self.assertIsNotNone(close);self.assertIsNotNone(add);self.assertEqual(close.size(),add.size());self.assertEqual(close.size().width(),22)
+        self.assertIn("border:1px solid #D8E1EC",FAST_STYLE)
 
     def test_lane_count_is_center_aligned(self):
         self.table.item(0,8).setText("10");self.page.commit_row(self.table,0,8)
