@@ -15,7 +15,7 @@ from PySide6.QtCore import QEvent, QMimeData, QPointF, QRectF, QSettings, QSize,
 from PySide6.QtGui import QAction, QColor, QFont, QGuiApplication, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QMainWindow,
-    QInputDialog, QLineEdit, QMessageBox, QPushButton, QSpinBox, QStackedWidget, QTabBar, QTabWidget, QTableWidgetItem,
+    QHeaderView, QInputDialog, QLineEdit, QMessageBox, QPushButton, QSpinBox, QStackedWidget, QTabBar, QTabWidget, QTableWidgetItem,
     QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
 from .app import GuidelinePage
@@ -31,15 +31,15 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.7.4"
+APP_VERSION = "1.7.5"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
 OPTIONAL_COLUMN_COLORS = {
-    17: ("#DCEBFA", "#EEF6FF"),
-    18: ("#DCEFE5", "#EDF8F2"),
-    19: ("#F8EBCB", "#FFF8E8"),
-    20: ("#E9E0F7", "#F5F0FF"),
+    17: ("#C6E1F7", "#DCEEFF"),
+    18: ("#CBEBD8", "#DDF4E7"),
+    19: ("#F6DFA4", "#FFF0C7"),
+    20: ("#DDCBF4", "#EEE2FF"),
 }
 EXTERNAL, INTERNAL = ROAD_CATEGORIES[0], ROAD_CATEGORIES[2]
 
@@ -446,7 +446,20 @@ class FastInputTable(FrozenInputTable):
     def _select_pair(self):
         item=self.item(self.currentRow(),0); identity=item.data(Qt.UserRole+1) if item else None
         for row in range(self.rowCount()):
-            if self.item(row,0).data(Qt.UserRole+1)==identity:self.selectRow(row)
+                if self.item(row,0).data(Qt.UserRole+1)==identity:self.selectRow(row)
+
+
+class OptionalColorHeader(QHeaderView):
+    """공통 헤더 스타일에 덮이지 않도록 보조입력 열 색을 직접 그린다."""
+
+    def __init__(self,parent=None):
+        super().__init__(Qt.Horizontal,parent);self.setDefaultAlignment(Qt.AlignCenter)
+
+    def paintSection(self,painter,rect,logical_index):
+        if logical_index not in OPTIONAL_COLUMN_COLORS:
+            super().paintSection(painter,rect,logical_index);return
+        painter.save();painter.fillRect(rect,QColor(OPTIONAL_COLUMN_COLORS[logical_index][0]));painter.setPen(QPen(QColor("#C5CFDB"),1));painter.drawLine(rect.topRight(),rect.bottomRight());painter.drawLine(rect.bottomLeft(),rect.bottomRight())
+        font=self.font();font.setBold(True);painter.setFont(font);painter.setPen(QColor("#253044"));text=str(self.model().headerData(logical_index,Qt.Horizontal,Qt.DisplayRole) or "");painter.drawText(rect.adjusted(4,4,-4,-4),Qt.AlignCenter|Qt.TextWordWrap,text);painter.restore()
 
 
 class AddTabDialog(QDialog):
@@ -534,7 +547,7 @@ class InputPage(QWidget):
         self.add.clicked.connect(self.add_pair);self.copy.clicked.connect(self.copy_selected);self.paste.clicked.connect(self.paste_selected);self.delete.clicked.connect(self.delete_selected);self.reset.clicked.connect(self.reset_selected);self.diagram_button.clicked.connect(self.show_network_diagram);self.optional.clicked.connect(self.toggle_optional)
         self._diagram_shortcut=QShortcut(QKeySequence("F6"),self);self._diagram_shortcut.setContext(Qt.WidgetWithChildrenShortcut);self._diagram_shortcut.activated.connect(self.show_network_diagram);self.changed.connect(self.refresh_network_diagram);self.refresh_tabs()
     def _make_table(self):
-        t=FastInputTable(0,len(self.HEADERS));t.setHorizontalHeaderLabels(self.HEADERS);t.verticalHeader().hide();t.verticalHeader().setDefaultSectionSize(34);t.frozen.verticalHeader().setDefaultSectionSize(34);t.setAlternatingRowColors(True);t.setSelectionMode(QAbstractItemView.ExtendedSelection);t.setSelectionBehavior(QAbstractItemView.SelectItems);t.setEditTriggers(QAbstractItemView.AllEditTriggers);t.setIconSize(QSize(13,13));t.frozen.setIconSize(QSize(13,13));t.horizontalHeader().setFixedHeight(84);t.frozen.horizontalHeader().setFixedHeight(84)
+        t=FastInputTable(0,len(self.HEADERS));header=OptionalColorHeader(t);t.setHorizontalHeader(header);header.sectionResized.connect(t._sync_width);t.setHorizontalHeaderLabels(self.HEADERS);t.verticalHeader().hide();t.verticalHeader().setDefaultSectionSize(34);t.frozen.verticalHeader().setDefaultSectionSize(34);t.setAlternatingRowColors(True);t.setSelectionMode(QAbstractItemView.ExtendedSelection);t.setSelectionBehavior(QAbstractItemView.SelectItems);t.setEditTriggers(QAbstractItemView.AllEditTriggers);t.setIconSize(QSize(13,13));t.frozen.setIconSize(QSize(13,13));t.horizontalHeader().setFixedHeight(84);t.frozen.horizontalHeader().setFixedHeight(84)
         header_font=t.horizontalHeader().font();header_font.setPointSizeF(7.8);t.horizontalHeader().setFont(header_font);t.frozen.horizontalHeader().setFont(header_font)
         widths=[44,82,40,118,30,40,118]+[70]*14
         for c,w in enumerate(widths):t.setColumnWidth(c,w)

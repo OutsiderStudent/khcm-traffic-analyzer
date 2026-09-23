@@ -9,7 +9,7 @@ from PySide6.QtCore import QItemSelectionModel, QRect, QSize, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFrame, QLineEdit, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
 
-from arterial_analysis.app_fast import APP_VERSION, FAST_STYLE, MainWindow, NetworkDiagramWidget, UserGuideDialog, build_network_graph, enable_native_file_dialogs
+from arterial_analysis.app_fast import APP_VERSION, FAST_STYLE, MainWindow, NetworkDiagramWidget, OptionalColorHeader, UserGuideDialog, build_network_graph, enable_native_file_dialogs
 from arterial_analysis.engine import SegmentInput
 from arterial_analysis.motion import MotionController
 
@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.7.4")
+        self.assertEqual(APP_VERSION,"1.7.5")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -274,7 +274,7 @@ class FastArterialUiTest(unittest.TestCase):
     def test_optional_columns_use_four_subtle_visual_colors(self):
         body_colors=[self.table.item(0,column).background().color().name() for column in (17,18,19,20)]
         header_colors=[self.table.horizontalHeaderItem(column).background().color().name() for column in (17,18,19,20)]
-        self.assertEqual(body_colors,["#eef6ff","#edf8f2","#fff8e8","#f5f0ff"]);self.assertEqual(len(set(header_colors)),4)
+        self.assertEqual(body_colors,["#dceeff","#ddf4e7","#fff0c7","#eee2ff"]);self.assertEqual(len(set(header_colors)),4);self.assertIsInstance(self.table.horizontalHeader(),OptionalColorHeader)
 
     def test_workflow_has_no_gray_gap_between_steps_and_page(self):
         self.assertEqual(self.window.workflow.layout().spacing(),0)
