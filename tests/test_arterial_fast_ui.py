@@ -62,10 +62,16 @@ class FastArterialUiTest(unittest.TestCase):
 
     def test_button_motion_has_tactile_press_and_release(self):
         controller=MotionController(APP,reduced_motion=False);button=QPushButton("확인")
-        controller.press_button(button);QTest.qWait(controller.PRESS_MS+20)
+        controller.press_button(button)
+        for _ in range(30):
+            if (id(button),"khcmPressProgress") not in controller._button_animations:break
+            QTest.qWait(20)
         self.assertGreater(float(button.property("khcmPressProgress")),0.9)
         self.assertIsNone(button.graphicsEffect())
-        controller.release_button(button);QTest.qWait(controller.RELEASE_MS+30)
+        controller.release_button(button)
+        for _ in range(30):
+            if (id(button),"khcmPressProgress") not in controller._button_animations:break
+            QTest.qWait(20)
         self.assertAlmostEqual(float(button.property("khcmPressProgress")),0.0,places=2)
 
     def test_compact_detail_button_keeps_text_height(self):
