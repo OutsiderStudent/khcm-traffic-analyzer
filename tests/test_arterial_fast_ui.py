@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.6.2")
+        self.assertEqual(APP_VERSION,"1.6.3")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -238,6 +238,14 @@ class FastArterialUiTest(unittest.TestCase):
         nodes,edges=build_network_graph(segments)
         self.assertEqual(len(nodes),3);self.assertEqual(len(edges),3)
         self.assertEqual({tuple(sorted((edge["start"][1],edge["end"][1]))) for edge in edges},{("1","2"),("1","3"),("2","3")})
+        pair12=next(edge for edge in edges if {edge["start"][1],edge["end"][1]}=={"1","2"})
+        self.assertEqual({item["segment"].direction for item in pair12["directions"]},{"→","←"})
+
+    def test_network_direction_metric_has_volume_speed_and_los(self):
+        segment=self.window.project.rows("현황",2026)[0]
+        segment.length_km=1.0;segment.lanes=2;segment.cycle_s=120;segment.green_s=50;segment.main_volume=1500;segment.phf=0.95
+        text=NetworkDiagramWidget._metric_text(segment,self.window.project.settings)
+        self.assertIn("1,500대/시",text);self.assertIn("km/h",text);self.assertIn("LOS ",text)
 
     def test_network_diagram_opens_and_has_current_counts(self):
         rows=self.window.project.rows("현황",2026);rows[0].start_number="1";rows[0].start_name="1교차로";rows[0].end_number="2";rows[0].end_name="2교차로"

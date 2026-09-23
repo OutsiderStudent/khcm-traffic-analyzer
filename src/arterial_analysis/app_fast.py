@@ -29,7 +29,7 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.6.2"
+APP_VERSION = "1.6.3"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -51,18 +51,36 @@ def build_network_graph(segments):
         start=node(segment.start_number,segment.start_name);end=node(segment.end_number,segment.end_name)
         if start is None or end is None or start==end:continue
         pair=tuple(sorted((start,end),key=lambda value:(value[0],value[1])))
-        edge=edges.setdefault(pair,{"start":pair[0],"end":pair[1],"roads":set(),"categories":set(),"uids":set()})
+        edge=edges.setdefault(pair,{"start":pair[0],"end":pair[1],"roads":set(),"categories":set(),"uids":set(),"directions":[]})
         if segment.road_name:edge["roads"].add(segment.road_name)
         edge["categories"].add(segment.road_category);edge["uids"].add(segment.uid)
+        from_key,to_key=(start,end) if segment.direction!="←" else (end,start)
+        edge["directions"].append({"from":from_key,"to":to_key,"segment":segment})
     return nodes,list(edges.values())
 
 
 class NetworkDiagramWidget(QWidget):
     edgeSelected=Signal(object)
     def __init__(self,parent=None):
-        super().__init__(parent);self.nodes={};self.edges=[];self.title="";self.highlight_uids=set();self._hit_edges=[];self.setMinimumSize(660,420);self.setMouseTracking(True)
-    def set_segments(self,segments,title="",highlight_uid=""):
-        self.nodes,self.edges=build_network_graph(segments);self.title=title;self.highlight_uids={str(x) for x in (highlight_uid if isinstance(highlight_uid,(set,list,tuple)) else [highlight_uid]) if x};self.update()
+        super().__init__(parent);self.nodes={};self.edges=[];self.title="";self.settings=None;self.highlight_uids=set();self._hit_edges=[];self.setMinimumSize(660,420);self.setMouseTracking(True)
+    def set_segments(self,segments,title="",highlight_uid="",settings=None):
+        self.nodes,self.edges=build_network_graph(segments);self.title=title;self.settings=settings;self.highlight_uids={str(x) for x in (highlight_uid if isinstance(highlight_uid,(set,list,tuple)) else [highlight_uid]) if x};self.update()
+    @staticmethod
+    def _metric_text(segment,settings):
+        if settings is None:return ""
+        volume=max(0,int(round(float(segment.main_volume or 0))))
+        try:
+            result=analyze_segment(segment,settings)
+            return f"{volume:,}대/시 · {result.speed_kmh:.1f}km/h · LOS {result.los}"
+        except (TypeError,ValueError,ZeroDivisionError):
+            return f"{volume:,}대/시 · 계산 전"
+    @staticmethod
+    def _draw_arrow(painter,start,end,color,width=1.4):
+        dx=end.x()-start.x();dy=end.y()-start.y();length=math.hypot(dx,dy)
+        if length<2:return
+        ux,uy=dx/length,dy/length;painter.setPen(QPen(color,width));painter.drawLine(start,end)
+        back=QPointF(end.x()-ux*9,end.y()-uy*9);normal=QPointF(-uy*4,ux*4)
+        painter.drawLine(end,back+normal);painter.drawLine(end,back-normal)
     @staticmethod
     def _sort_key(key):
         value=key[1]
@@ -96,6 +114,19 @@ class NetworkDiagramWidget(QWidget):
             roads=" · ".join(sorted(edge["roads"]));mid=(first+second)/2;box=QRectF(mid.x()-78,mid.y()-12,156,24);self._hit_edges.append((edge,first,second,box))
             if roads:
                 metrics=painter.fontMetrics();text=metrics.elidedText(roads,Qt.ElideRight,150);painter.fillRect(box,QColor(255,255,255,225));painter.setPen(QColor("#475569"));painter.setFont(label_font);painter.drawText(box,Qt.AlignCenter,text)
+            dx=second.x()-first.x();dy=second.y()-first.y();length=max(1,math.hypot(dx,dy));ux,uy=dx/length,dy/length;nx,ny=-uy,ux
+            directions=sorted(edge["directions"],key=lambda item:0 if item["segment"].direction=="→" else 1)[:2]
+            offsets=[-11,11] if len(directions)>1 else [-9]
+            metric_font=QFont(painter.font());metric_font.setPointSize(8)
+            for direction,offset in zip(directions,offsets):
+                origin,destination=positions[direction["from"]],positions[direction["to"]]
+                adx=destination.x()-origin.x();ady=destination.y()-origin.y();alen=max(1,math.hypot(adx,ady));aux,auy=adx/alen,ady/alen
+                start=QPointF(origin.x()+aux*29+nx*offset,origin.y()+auy*29+ny*offset);end=QPointF(destination.x()-aux*29+nx*offset,destination.y()-auy*29+ny*offset)
+                arrow_color=QColor("#D97706") if highlight else color;self._draw_arrow(painter,start,end,arrow_color)
+                metric=self._metric_text(direction["segment"],self.settings)
+                if metric:
+                    label_offset=-30 if offset<0 else 30;label_mid=QPointF(mid.x()+nx*label_offset,mid.y()+ny*label_offset)
+                    metric_box=QRectF(label_mid.x()-112,label_mid.y()-10,224,20);painter.fillRect(metric_box,QColor(255,255,255,232));painter.setFont(metric_font);painter.setPen(QColor("#334155"));painter.drawText(metric_box,Qt.AlignCenter,painter.fontMetrics().elidedText(metric,Qt.ElideRight,218))
         node_font=QFont(painter.font());node_font.setBold(True);node_font.setPointSize(11);name_font=QFont(painter.font());name_font.setPointSize(8)
         highlighted_nodes=set()
         for edge in self.edges:
@@ -692,7 +723,7 @@ class InputPage(QWidget):
             table=self.active_table();row=table.currentRow();highlight_uid=table.item(row,0).data(Qt.UserRole) if row>=0 and table.item(row,0) else ""
         rows=self.project.rows(*self.current_key) if self.current_key else []
         nodes,edges=build_network_graph(rows);title=f"{self.tab_label(self.current_key)} · 교차로 {len(nodes)}개 · 연결 구간 {len(edges)}개" if self.current_key else "구간 연결 삽도"
-        self.diagram_dialog.diagram.set_segments(rows,title,highlight_uid or "")
+        self.diagram_dialog.diagram.set_segments(rows,title,highlight_uid or "",self.project.settings)
     def select_diagram_edge(self,uids):
         uid_set={str(uid) for uid in uids};choices=[]
         for index,table in enumerate((self.external,self.internal)):
