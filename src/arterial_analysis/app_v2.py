@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QEvent, QMimeData, QRect, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QMimeData, QRect, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QDoubleValidator, QFontDatabase, QGuiApplication, QIcon, QIntValidator, QKeySequence, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QStyle,
     QStyleOptionButton,
+    QStyleOptionTab,
     QStyledItemDelegate,
     QTabBar,
     QTabWidget,
@@ -243,14 +244,90 @@ class CopyableTable(QTableWidget):
 
 
 class EditableTabBar(QTabBar):
-    """이미 선택된 탭의 문구를 한 번 클릭하면 편집 요청을 보낸다."""
+    """탭명·닫기 아이콘과 추가 아이콘을 픽셀 기준으로 직접 배치한다."""
 
     activeLabelClicked = Signal(int)
+    closeRequested = Signal(int)
+
+    ICON_SIZE = 14
+    LABEL_CLOSE_GAP = 4
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._add_icon = QIcon(resource_path("assets/tab-add.svg"))
+        self._close_icon = QIcon(resource_path("assets/tab-close.svg"))
+        self._pressed_close = -1
+
+    def _is_add_tab(self, index):
+        return index >= 0 and self.tabData(index) is None
+
+    def _is_closeable(self, index):
+        data = self.tabData(index)
+        return isinstance(data, (tuple, list)) and bool(data) and data[0] != "현황"
+
+    def tabSizeHint(self, index):
+        base = super().tabSizeHint(index)
+        if self._is_add_tab(index):
+            return QSize(30, base.height())
+        text_width = self.fontMetrics().horizontalAdvance(self.tabText(index))
+        close_width = self.ICON_SIZE + self.LABEL_CLOSE_GAP if self._is_closeable(index) else 0
+        return QSize(max(base.width(), text_width + close_width + 20), base.height())
+
+    def _add_icon_rect(self, index):
+        rect = self.tabRect(index)
+        icon_rect = QRect(0, 0, self.ICON_SIZE, self.ICON_SIZE)
+        icon_rect.moveCenter(rect.center())
+        icon_rect.translate(-1, 0)
+        return icon_rect
+
+    def _content_rects(self, index):
+        rect = self.tabRect(index)
+        text_width = self.fontMetrics().horizontalAdvance(self.tabText(index))
+        closeable = self._is_closeable(index)
+        group_width = text_width + (self.LABEL_CLOSE_GAP + self.ICON_SIZE if closeable else 0)
+        left = rect.center().x() - group_width // 2
+        text_rect = QRect(left, rect.top(), text_width, rect.height())
+        close_rect = QRect(left + text_width + self.LABEL_CLOSE_GAP, 0, self.ICON_SIZE, self.ICON_SIZE) if closeable else QRect()
+        if closeable: close_rect.moveCenter(QRect(close_rect.left(), rect.top(), self.ICON_SIZE, rect.height()).center())
+        return text_rect, close_rect
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        for index in range(self.count()):
+            option = QStyleOptionTab()
+            self.initStyleOption(option, index)
+            option.text = ""
+            option.icon = QIcon()
+            self.style().drawControl(QStyle.CE_TabBarTabShape, option, painter, self)
+            if self._is_add_tab(index):
+                self._add_icon.paint(painter, self._add_icon_rect(index), Qt.AlignCenter)
+                continue
+            text_rect, close_rect = self._content_rects(index)
+            font = painter.font();font.setBold(index == self.currentIndex());painter.setFont(font)
+            color = self.tabTextColor(index)
+            painter.setPen(color if color.isValid() else option.palette.color(option.palette.ButtonText))
+            tight = painter.fontMetrics().tightBoundingRect(self.tabText(index))
+            baseline = self.tabRect(index).center().y() - tight.center().y()
+            painter.drawText(text_rect.left(), baseline, self.tabText(index))
+            if not close_rect.isNull():
+                self._close_icon.paint(painter, close_rect, Qt.AlignCenter)
 
     def mousePressEvent(self,event):
+        index = self.tabAt(event.position().toPoint())
+        if index >= 0 and self._is_closeable(index) and self._content_rects(index)[1].contains(event.position().toPoint()):
+            self._pressed_close = index
+            event.accept()
+            return
+        self._pressed_close = -1
         self._pressed_current=self.currentIndex(); super().mousePressEvent(event)
 
     def mouseReleaseEvent(self,event):
+        if self._pressed_close >= 0:
+            index = self._pressed_close
+            self._pressed_close = -1
+            if self._content_rects(index)[1].contains(event.position().toPoint()): self.closeRequested.emit(index)
+            event.accept()
+            return
         index=self.tabAt(event.position().toPoint()); super().mouseReleaseEvent(event)
         if index>=0 and index==getattr(self,"_pressed_current",-1): self.activeLabelClicked.emit(index)
 
@@ -348,7 +425,7 @@ class InputPage(QWidget):
         for button in (self.add_pair,self.copy_segments,self.paste_segments,self.delete,self.reset): buttons1.addWidget(button)
         buttons1.addStretch(); root.addLayout(buttons1)
         nav = QHBoxLayout(); nav.addStretch(); self.next_button = QPushButton("분석 실행"); self.next_button.setObjectName("primaryButton"); nav.addWidget(self.next_button); root.addLayout(nav)
-        self.analysis_tabs.currentChanged.connect(self._tab_changed)
+        self.analysis_tabs.currentChanged.connect(self._tab_changed); self.analysis_tabs.closeRequested.connect(lambda index:self._delete_analysis_key(tuple(self.analysis_tabs.tabData(index))))
         self.analysis_tabs.activeLabelClicked.connect(self._edit_tab_year)
         self.add_pair.clicked.connect(self.add_direction_pair); self.delete.clicked.connect(self.delete_selected)
         self.copy_segments.clicked.connect(self.copy_selected_segments); self.paste_segments.clicked.connect(self.paste_copied_segments)
@@ -413,10 +490,7 @@ class InputPage(QWidget):
             index = self.analysis_tabs.addTab(self._tab_label(key, bool(self.structure_changes(key))))
             self.analysis_tabs.setTabData(index, key)
             self.analysis_tabs.setTabTextColor(index,{"현황":QColor("#475569"),"사업 미시행시":QColor("#2563EB"),"사업 시행시":QColor("#059669"),"개선대책 이행시":QColor("#D97706")}[key[0]])
-            if key[0]!="현황":
-                close=QToolButton(self.analysis_tabs); close.setText("×"); close.setObjectName("tabCloseButton"); close.setFixedSize(22,22); close.setCursor(Qt.PointingHandCursor); close.setToolTip("탭 삭제")
-                close.clicked.connect(lambda _=False,k=key:self._delete_analysis_key(k)); self.analysis_tabs.setTabButton(index,QTabBar.ButtonPosition.RightSide,close)
-        plus = self.analysis_tabs.addTab("+"); self.analysis_tabs.setTabData(plus, None); self.analysis_tabs.setTabToolTip(plus,"분석 탭 추가")
+        plus = self.analysis_tabs.addTab(""); self.analysis_tabs.setTabData(plus, None); self.analysis_tabs.setTabToolTip(plus,"분석 탭 추가")
         target = next((i for i, key in enumerate(keys) if key == current), 0)
         self.analysis_tabs.setCurrentIndex(target); self._changing_tabs = False
         if keys:
@@ -757,9 +831,11 @@ class ResultsPage(QWidget):
         hero_row=QHBoxLayout(); self.hero = QLabel(); self.hero.setObjectName("resultHero"); self.hero.setWordWrap(True); hero_row.addWidget(self.hero,1); self.copy_hero=QPushButton("문구 복사"); self.copy_hero.setObjectName("primaryButton"); hero_row.addWidget(self.copy_hero); root.addLayout(hero_row)
         self.save_notice=QLabel("분석 결과를 확인한 뒤 프로젝트를 저장해 주세요."); self.save_notice.setObjectName("saveNotice"); root.addWidget(self.save_notice)
         self.link_warning=QLabel();self.link_warning.setObjectName("linkWarning");self.link_warning.setWordWrap(True);self.link_warning.hide();root.addWidget(self.link_warning)
-        self.tabs = QTabBar(); self.tabs.setExpanding(False); self.tabs.setDrawBase(False); root.addWidget(self.tabs)
-        hint = QHBoxLayout(); copy_note = QLabel("표 범위를 선택한 뒤 Ctrl+C로 한글 표에 붙여넣을 수 있습니다. 평균통행속도 셀을 더블클릭하면 근거를 남기고 조정할 수 있습니다."); copy_note.setObjectName("copyNote"); hint.addWidget(copy_note); hint.addStretch(); root.addLayout(hint)
-        self.table = CopyableTable(); root.addWidget(make_card("2. 분석 결과", self.table), 1)
+        sheet_group=QWidget();sheet_group_layout=QVBoxLayout(sheet_group);sheet_group_layout.setContentsMargins(0,0,0,0);sheet_group_layout.setSpacing(0)
+        self.tabs = QTabBar(); self.tabs.setObjectName("sheetTabs"); self.tabs.setExpanding(False); self.tabs.setDrawBase(False); sheet_group_layout.addWidget(self.tabs)
+        sheet_panel=QFrame();sheet_panel.setObjectName("tabSheetPanel");sheet_layout=QVBoxLayout(sheet_panel);sheet_layout.setContentsMargins(10,8,10,10);sheet_layout.setSpacing(6)
+        hint = QHBoxLayout(); copy_note = QLabel("표 범위를 선택한 뒤 Ctrl+C로 한글 표에 붙여넣을 수 있습니다. 평균통행속도 셀을 더블클릭하면 근거를 남기고 조정할 수 있습니다."); copy_note.setObjectName("copyNote"); hint.addWidget(copy_note); hint.addStretch(); sheet_layout.addLayout(hint)
+        self.table = CopyableTable();result_card=make_card("2. 분석 결과", self.table);result_card.setObjectName("tabContentCard");sheet_layout.addWidget(result_card,1);sheet_group_layout.addWidget(sheet_panel,1);root.addWidget(sheet_group,1)
         nav = QHBoxLayout(); self.back = QPushButton("구간 입력으로"); self.detail = QPushButton("부록용 세부 계산"); self.detail.setObjectName("primaryButton"); nav.addWidget(self.back); nav.addStretch(); nav.addWidget(self.detail); root.addLayout(nav)
         self.tabs.currentChanged.connect(self.show_tab); self.copy_hero.clicked.connect(lambda:QGuiApplication.clipboard().setText(self.hero.text())); self.table.itemDoubleClicked.connect(self.edit_speed)
 
@@ -843,9 +919,11 @@ class DetailPage(QWidget):
         super().__init__(); self.project=None; self.results=[]; self.current_spec=None
         root=QVBoxLayout(self); root.setContentsMargins(14,10,14,10); root.setSpacing(6)
         title=QLabel("부록용 세부 계산결과"); title.setObjectName("pageTitle"); root.addWidget(title)
-        self.tabs=QTabBar(); self.tabs.setExpanding(False); self.tabs.setDrawBase(False); root.addWidget(self.tabs)
-        note_row=QHBoxLayout(); note=QLabel("세부 계산표는 셀 복사와 고해상도 이미지 복사를 지원합니다. V는 계산에 사용한 주이동류 교통량입니다."); note.setObjectName("infoBar"); note_row.addWidget(note,1); self.copy_image=QPushButton("부록 이미지 복사"); self.copy_image.setObjectName("primaryButton"); note_row.addWidget(self.copy_image); root.addLayout(note_row)
-        self.table=CopyableTable(); root.addWidget(make_card("3. 세부 계산결과",self.table),1)
+        sheet_group=QWidget();sheet_group_layout=QVBoxLayout(sheet_group);sheet_group_layout.setContentsMargins(0,0,0,0);sheet_group_layout.setSpacing(0)
+        self.tabs=QTabBar(); self.tabs.setObjectName("sheetTabs"); self.tabs.setExpanding(False); self.tabs.setDrawBase(False); sheet_group_layout.addWidget(self.tabs)
+        sheet_panel=QFrame();sheet_panel.setObjectName("tabSheetPanel");sheet_layout=QVBoxLayout(sheet_panel);sheet_layout.setContentsMargins(10,8,10,10);sheet_layout.setSpacing(6)
+        note_row=QHBoxLayout(); note=QLabel("세부 계산표는 셀 복사와 고해상도 이미지 복사를 지원합니다. V는 계산에 사용한 주이동류 교통량입니다."); note.setObjectName("infoBar"); note_row.addWidget(note,1); self.copy_image=QPushButton("부록 이미지 복사"); self.copy_image.setObjectName("primaryButton"); note_row.addWidget(self.copy_image); sheet_layout.addLayout(note_row)
+        self.table=CopyableTable();detail_card=make_card("3. 세부 계산결과",self.table);detail_card.setObjectName("tabContentCard");sheet_layout.addWidget(detail_card,1);sheet_group_layout.addWidget(sheet_panel,1);root.addWidget(sheet_group,1)
         nav=QHBoxLayout(); self.back=QPushButton("분석 결과로"); self.input=QPushButton("구간 입력으로"); nav.addWidget(self.back); nav.addStretch(); nav.addWidget(self.input); root.addLayout(nav)
         self.tabs.currentChanged.connect(self.show_tab); self.copy_image.clicked.connect(self.copy_appendix_image)
 
@@ -901,7 +979,7 @@ class MainWindow(QMainWindow):
         self.dirty=False; self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}"); self.resize(1152,738); self.setMinimumSize(850,590)
         icon=resource_path("assets/arterial-analysis-icon.ico")
         if Path(icon).exists():self.setWindowIcon(QIcon(icon))
-        self.tabs=QTabWidget(); self.workflow=Workflow(self.project); self.tabs.addTab(self.workflow,"분석"); self.tabs.addTab(GuidelinePage(),"지침·공식"); self.setCentralWidget(self.tabs)
+        self.tabs=QTabWidget();self.tabs.setObjectName("mainTabs");self.tabs.tabBar().setObjectName("mainTabBar"); self.workflow=Workflow(self.project); self.tabs.addTab(self.workflow,"분석"); self.tabs.addTab(GuidelinePage(),"지침·공식"); self.setCentralWidget(self.tabs)
         self.workflow.changed.connect(self.mark_dirty)
         menu=self.menuBar().addMenu("프로젝트")
         for label,slot,shortcut in (("새 프로젝트",self.new,"Ctrl+N"),("열기",self.open,"Ctrl+O"),("저장",self.save,"Ctrl+S"),("다른 이름으로 저장",self.save_as,"Ctrl+Shift+S")):
@@ -956,8 +1034,8 @@ STYLE="""
 QWidget{font-family:"Noto Sans KR","Malgun Gothic";font-size:9pt;color:#253044} QMainWindow,QStackedWidget{background:#F5F7FA}
 QDialog,QMessageBox,QFileDialog{background:#F5F7FA;color:#172033} QDialog QLabel,QMessageBox QLabel,QFileDialog QLabel{color:#172033;background:transparent} QTextEdit{background:white;color:#172033;border:1px solid #CBD6E4;border-radius:7px;padding:6px}
 QMenuBar{background:white;color:#253044;padding:3px 7px} QMenuBar::item{background:transparent;color:#253044;padding:5px 9px} QMenuBar::item:selected{background:#F0F5FF;color:#1769D2;border-radius:5px} QMenu{background:white;color:#253044;border:1px solid #DDE3EC;padding:4px} QMenu::item{background:transparent;color:#253044;padding:6px 25px 6px 9px;border-radius:4px} QMenu::item:selected{background:#F0F5FF;color:#1769D2}
-QTabWidget::pane{border:0;border-top:1px solid #D7E0EA} QTabBar{background:transparent;border:0} QTabBar::tear{width:0;height:0} QTabBar::tab{background:#F7F9FC;padding:7px 10px;margin-right:3px;color:#657087;border:1px solid #D8E1EC;border-bottom:2px solid #C8D3E0;border-top-left-radius:8px;border-top-right-radius:8px} QTabBar::tab:hover{background:#EEF4FD;border-color:#AFC5E2} QTabBar::tab:selected{background:white;color:#1769D2;font-weight:700;border-color:#8CB9F5;border-bottom:3px solid #2375E8} QToolButton#tabCloseButton,QToolButton#tabAddButton{background:transparent;border:0;padding:0;margin:0 3px 0 1px;color:#64748B;font-size:11pt;font-weight:700} QToolButton#tabAddButton{font-size:12pt;color:#1769D2} QToolButton#tabCloseButton:hover{color:#C62828;background:#FEECEC;border-radius:7px} QToolButton#tabAddButton:hover{color:#0F5DBD;background:#DCEAFF;border-radius:7px}
-QFrame#card{background:white;border:1px solid #E0E6EE;border-radius:10px} QLabel#cardTitle{font-size:11pt;font-weight:800;color:#172033} QLabel#pageTitle{font-size:16pt;font-weight:800;color:#172033;padding:2px 0 3px} QLabel#infoBar{background:#FFF8E6;color:#8A5A00;border-radius:7px;padding:7px 10px} QLabel#changeNotice{background:#FFE8D5;color:#9A3E00;border:1px solid #FFB779;border-radius:7px;padding:7px 10px} QLabel#copyNote{color:#526079;padding:3px}
+QTabWidget::pane{background:#FFFFFF;border:1px solid #D7E0EA;border-top-left-radius:0;border-top-right-radius:9px;border-bottom-left-radius:9px;border-bottom-right-radius:9px;top:-1px} QTabBar{background:transparent;border:0} QTabBar::tear{width:0;height:0} QTabBar::tab{background:#F2F5F9;padding:7px 10px;margin-right:3px;color:#657087;border:1px solid #D8E1EC;border-bottom:1px solid #D7E0EA;border-top-left-radius:8px;border-top-right-radius:8px;min-height:22px} QTabBar::tab:hover{background:#EAF1FA;border-color:#AFC5E2} QTabBar::tab:selected{background:#FFFFFF;color:#1769D2;font-weight:700;border-color:#AFC1DA;border-bottom-color:#FFFFFF;margin-bottom:-1px} QTabBar#sheetTabs::tab:selected{background:#F1F4F8;border-bottom-color:#F1F4F8} QTabBar#contentTabBar::tab:selected{background:#FFFFFF;border-bottom-color:#FFFFFF} QTabBar#mainTabBar::tab:selected{background:#F5F7FA;border-bottom-color:#F5F7FA} QToolButton#tabCloseButton{background:transparent;border:0;padding:0;margin:0 2px} QToolButton#tabCloseButton:hover{background:#FEECEC;border-radius:7px}
+QFrame#card{background:white;border:1px solid #E0E6EE;border-radius:10px} QFrame#tabContentCard{background:#FFFFFF;border:0;border-radius:0} QFrame#tabSheetPanel{background:#F1F4F8;border:1px solid #D7E0EA;border-top-left-radius:0;border-top-right-radius:9px;border-bottom-left-radius:9px;border-bottom-right-radius:9px} QLabel#cardTitle{font-size:11pt;font-weight:800;color:#172033} QLabel#pageTitle{font-size:16pt;font-weight:800;color:#172033;padding:2px 0 3px} QLabel#infoBar{background:#FFF8E6;color:#8A5A00;border-radius:7px;padding:7px 10px} QLabel#changeNotice{background:#FFE8D5;color:#9A3E00;border:1px solid #FFB779;border-radius:7px;padding:7px 10px} QLabel#copyNote{color:#526079;padding:3px}
 QLabel#stepBar{background:white;color:#64748B;padding:10px 16px;border-bottom:1px solid #E7EBF0} QLabel#resultHero{background:#EAF2FF;border:1px solid #2375E8;border-radius:13px;color:#1769D2;font-size:12pt;font-weight:800;padding:12px 16px}
 QLabel#saveNotice{background:#FFF7D6;color:#8A5800;border:1px solid #F2D681;border-radius:8px;padding:7px 11px}
 QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox{background:white;color:#253044;border:1px solid #CFD7E3;border-radius:6px;padding:4px 27px 4px 7px;min-height:18px} QLineEdit{padding-right:7px} QSpinBox,QDoubleSpinBox{padding-right:7px} QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus,QComboBox:focus{border:2px solid #2375E8;background:white} QComboBox::drop-down{subcontrol-origin:padding;subcontrol-position:top right;width:25px;border-left:1px solid #D8E0E9;border-top-right-radius:6px;border-bottom-right-radius:6px;background:#F7FAFC} QComboBox::drop-down:hover{background:#EAF2FF} QComboBox::down-arrow{image:url("__COMBO_ARROW__");width:11px;height:7px} QComboBox QAbstractItemView{background:white;color:#253044;border:1px solid #9FB2C8;selection-background-color:#DDEBFF;selection-color:#1769D2;outline:0;padding:2px} QSpinBox::up-button,QSpinBox::down-button,QDoubleSpinBox::up-button,QDoubleSpinBox::down-button{width:0;height:0;border:0}

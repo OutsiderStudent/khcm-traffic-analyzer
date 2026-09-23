@@ -5,9 +5,9 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QItemSelectionModel, QRect, Qt
+from PySide6.QtCore import QItemSelectionModel, QRect, QSize, Qt
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
+from PySide6.QtWidgets import QApplication, QDialog, QFrame, QLineEdit, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
 
 from arterial_analysis.app_fast import APP_VERSION, FAST_STYLE, MainWindow, NetworkDiagramWidget, UserGuideDialog, build_network_graph, enable_native_file_dialogs
 from arterial_analysis.engine import SegmentInput
@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.7.2")
+        self.assertEqual(APP_VERSION,"1.7.3")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -246,11 +246,21 @@ class FastArterialUiTest(unittest.TestCase):
             self.assertLessEqual(max(map(len,header.splitlines())),6)
         self.assertGreaterEqual(self.table.horizontalHeader().height(),84)
 
-    def test_analysis_tab_plus_is_centered_text_and_close_is_compact(self):
+    def test_analysis_tab_plus_is_centered_and_close_sits_by_label(self):
         self.window.project.ensure_tab("사업 미시행시",2033);self.page.refresh_tabs(("사업 미시행시",2033))
-        close=self.page.analysis_tabs.findChild(QToolButton,"tabCloseButton");plus=self.page.analysis_tabs.count()-1
-        self.assertIsNotNone(close);self.assertEqual(close.size().width(),22);self.assertEqual(self.page.analysis_tabs.tabText(plus),"+");self.assertIsNone(self.page.analysis_tabs.tabButton(plus,QTabBar.RightSide))
+        scenario=1;plus=self.page.analysis_tabs.count()-1;add_rect=self.page.analysis_tabs._add_icon_rect(plus);text_rect,close_rect=self.page.analysis_tabs._content_rects(scenario)
+        self.assertEqual(add_rect.size(),QSize(14,14));self.assertEqual(add_rect.center().x(),self.page.analysis_tabs.tabRect(plus).center().x()-1);self.assertEqual(add_rect.center().y(),self.page.analysis_tabs.tabRect(plus).center().y());self.assertEqual(self.page.analysis_tabs.tabRect(plus).width(),30);self.assertEqual(close_rect.size(),add_rect.size());self.assertEqual(close_rect.left()-text_rect.right()-1,self.page.analysis_tabs.LABEL_CLOSE_GAP);self.assertIsNone(self.page.analysis_tabs.tabButton(scenario,QTabBar.RightSide));self.assertIsNone(self.page.analysis_tabs.tabButton(plus,QTabBar.RightSide))
         self.assertIn("border:1px solid #D8E1EC",FAST_STYLE)
+
+    def test_tab_levels_are_visually_connected_to_their_content(self):
+        self.assertEqual(self.window.tabs.objectName(),"mainTabs");self.assertEqual(self.window.tabs.tabBar().objectName(),"mainTabBar")
+        self.assertEqual(self.page.analysis_tabs.objectName(),"sheetTabs");self.assertIsNotNone(self.page.findChild(QFrame,"analysisSheet"))
+        self.assertEqual(self.page.road_tabs.objectName(),"connectedTabs");self.assertEqual(self.page.road_tabs.tabBar().objectName(),"contentTabBar")
+        self.assertEqual(self.window.workflow.results_page.tabs.objectName(),"sheetTabs");self.assertIsNotNone(self.window.workflow.results_page.findChild(QFrame,"tabSheetPanel"))
+        self.assertEqual(self.window.workflow.detail_page.tabs.objectName(),"sheetTabs");self.assertIsNotNone(self.window.workflow.detail_page.findChild(QFrame,"tabSheetPanel"))
+        self.assertIn("QTabBar#sheetTabs::tab:selected{background:#F1F4F8",FAST_STYLE)
+        self.assertIn("QFrame#analysisSheet{background:#F1F4F8",FAST_STYLE)
+        self.assertNotIn("border-radius:0 9px",FAST_STYLE)
 
     def test_intersection_names_are_wider_and_frozen_boundary_is_visible(self):
         self.assertEqual(self.table.columnWidth(3),118);self.assertEqual(self.table.columnWidth(6),118)
@@ -267,7 +277,7 @@ class FastArterialUiTest(unittest.TestCase):
 
     def test_user_guide_has_core_workflow_pages(self):
         dialog=UserGuideDialog(self.window);tabs=dialog.findChild(QTabWidget)
-        self.assertIsNotNone(tabs);self.assertGreaterEqual(tabs.count(),5);self.assertIn("Excel 연결",[tabs.tabText(i) for i in range(tabs.count())]);dialog.deleteLater()
+        self.assertIsNotNone(tabs);self.assertEqual(tabs.objectName(),"connectedTabs");self.assertEqual(tabs.tabBar().objectName(),"contentTabBar");self.assertGreaterEqual(tabs.count(),5);self.assertIn("Excel 연결",[tabs.tabText(i) for i in range(tabs.count())]);dialog.deleteLater()
 
     def test_lane_count_is_center_aligned(self):
         self.table.item(0,8).setText("10");self.page.commit_row(self.table,0,8)
