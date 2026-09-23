@@ -5,7 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QItemSelectionModel, QRect, QSize, Qt
+from PySide6.QtCore import QItemSelectionModel, QRect, QRectF, QSize, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QLineEdit, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
 
@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.7.8")
+        self.assertEqual(APP_VERSION,"1.7.9")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -309,6 +309,14 @@ class FastArterialUiTest(unittest.TestCase):
         self.assertEqual({tuple(sorted((edge["start"][1],edge["end"][1]))) for edge in edges},{("1","2"),("1","3"),("2","3")})
         pair12=next(edge for edge in edges if {edge["start"][1],edge["end"][1]}=={"1","2"})
         self.assertEqual({item["segment"].direction for item in pair12["directions"]},{"→","←"})
+
+    def test_network_layout_removes_crossings_for_extended_road_graph(self):
+        def segment(uid,start,end):
+            return SegmentInput(uid=uid,comparison_id=uid,scenario="현황",year=2026,road_name=uid,start_number=start,start_name=f"{start}교차로",end_number=end,end_name=f"{end}교차로")
+        segments=[segment(f"{start}-{end}",start,end) for start,end in (("1","2"),("2","3"),("3","4"),("2","5"),("5","6"),("3","6"))]
+        widget=NetworkDiagramWidget();widget.set_segments(segments);positions=widget._positions(QRectF(0,0,900,650))
+        self.assertEqual(widget._crossing_count(positions),0)
+        self.assertGreater(widget.width(),700)
 
     def test_network_direction_metric_has_volume_speed_and_los(self):
         segment=self.window.project.rows("현황",2026)[0]

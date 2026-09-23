@@ -4,6 +4,7 @@ import ctypes
 import html
 import json
 import math
+import random
 import re
 import sys
 from dataclasses import replace
@@ -15,7 +16,7 @@ from PySide6.QtCore import QEvent, QMimeData, QPointF, QRectF, QSettings, QSize,
 from PySide6.QtGui import QAction, QColor, QFont, QGuiApplication, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QMainWindow,
-    QHeaderView, QInputDialog, QLineEdit, QMessageBox, QPushButton, QSpinBox, QStackedWidget, QTabBar, QTabWidget, QTableWidgetItem,
+    QHeaderView, QInputDialog, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSpinBox, QStackedWidget, QTabBar, QTabWidget, QTableWidgetItem,
     QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
 from .app import GuidelinePage
@@ -31,7 +32,7 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.7.8"
+APP_VERSION = "1.7.9"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -70,9 +71,12 @@ def build_network_graph(segments):
 class NetworkDiagramWidget(QWidget):
     edgeSelected=Signal(object)
     def __init__(self,parent=None):
-        super().__init__(parent);self.nodes={};self.edges=[];self.title="";self.settings=None;self.highlight_uids=set();self._hit_edges=[];self._arrow_segments=[];self._label_boxes=[];self.setMinimumSize(660,420);self.setMouseTracking(True)
+        super().__init__(parent);self.nodes={};self.edges=[];self.title="";self.settings=None;self.highlight_uids=set();self._hit_edges=[];self._arrow_segments=[];self._label_boxes=[];self._layout_signature=None;self._layout={};self.setMinimumSize(660,420);self.setMouseTracking(True)
     def set_segments(self,segments,title="",highlight_uid="",settings=None):
-        self.nodes,self.edges=build_network_graph(segments);self.title=title;self.settings=settings;self.highlight_uids={str(x) for x in (highlight_uid if isinstance(highlight_uid,(set,list,tuple)) else [highlight_uid]) if x};self.update()
+        self.nodes,self.edges=build_network_graph(segments);self.title=title;self.settings=settings;self.highlight_uids={str(x) for x in (highlight_uid if isinstance(highlight_uid,(set,list,tuple)) else [highlight_uid]) if x}
+        signature=tuple(sorted((repr(edge["start"]),repr(edge["end"])) for edge in self.edges))
+        if signature!=self._layout_signature:self._layout_signature=signature;self._layout=self._build_non_crossing_layout()
+        count=len(self.nodes);self.setFixedSize(max(700,720+max(0,count-4)*110),max(460,500+max(0,count-4)*90));self.update()
     @staticmethod
     def _metric_text(segment,settings):
         if settings is None:return ""
@@ -119,15 +123,63 @@ class NetworkDiagramWidget(QWidget):
         value=key[1]
         try:return (0,float(value))
         except ValueError:return (1,value)
+    @staticmethod
+    def _segments_cross(a,b,c,d):
+        def orientation(p,q,r):return (q.x()-p.x())*(r.y()-p.y())-(q.y()-p.y())*(r.x()-p.x())
+        ab_c,ab_d=orientation(a,b,c),orientation(a,b,d);cd_a,cd_b=orientation(c,d,a),orientation(c,d,b)
+        return ab_c*ab_d < -1e-9 and cd_a*cd_b < -1e-9
+    def _crossing_count(self,positions):
+        count=0
+        for index,first in enumerate(self.edges):
+            for second in self.edges[index+1:]:
+                if {first["start"],first["end"]}&{second["start"],second["end"]}:continue
+                if self._segments_cross(positions[first["start"]],positions[first["end"]],positions[second["start"]],positions[second["end"]]):count+=1
+        return count
+    def _layout_score(self,positions):
+        crossings=self._crossing_count(positions);near=0;keys=list(positions)
+        for edge in self.edges:
+            start,end=positions[edge["start"]],positions[edge["end"]]
+            for key in keys:
+                if key not in (edge["start"],edge["end"]) and self._distance(positions[key],start,end)<.085:near+=1
+        distances=[math.hypot(positions[a].x()-positions[b].x(),positions[a].y()-positions[b].y()) for i,a in enumerate(keys) for b in keys[i+1:]]
+        return crossings,near,-(min(distances) if distances else 1)
+    def _build_non_crossing_layout(self):
+        keys=sorted(self.nodes,key=self._sort_key);count=len(keys)
+        if count<=1:return {key:QPointF(.5,.5) for key in keys}
+        if count==2:return {keys[0]:QPointF(.2,.5),keys[1]:QPointF(.8,.5)}
+        rng=random.Random(repr(self._layout_signature));best=None;best_score=(10**9,10**9,0)
+        def circle(order):
+            return {key:QPointF(.5+.43*math.cos(-math.pi/2+2*math.pi*i/count),.5+.43*math.sin(-math.pi/2+2*math.pi*i/count)) for i,key in enumerate(order)}
+        orders=[keys]
+        adjacency={key:set() for key in keys}
+        for edge in self.edges:adjacency[edge["start"]].add(edge["end"]);adjacency[edge["end"]].add(edge["start"])
+        for root in keys:
+            order=[];seen=set()
+            def visit(key):
+                if key in seen:return
+                seen.add(key);order.append(key)
+                for neighbor in sorted(adjacency[key],key=lambda item:(len(adjacency[item]),self._sort_key(item))):visit(neighbor)
+            visit(root)
+            for key in keys:visit(key)
+            orders.append(order)
+        for _ in range(min(1800,max(300,count*180))):sample=keys[:];rng.shuffle(sample);orders.append(sample)
+        for order in orders:
+            positions=circle(order);score=self._layout_score(positions)
+            if score<best_score:best,best_score=positions,score
+            if score[:2]==(0,0):return positions
+        # Some planar graphs are not outer-planar. Search a roomy two-dimensional
+        # canvas so an interior node can remove crossings that no circle order can.
+        zero_candidates=0
+        for _ in range(5000):
+            positions={key:QPointF(rng.uniform(.08,.92),rng.uniform(.08,.92)) for key in keys}
+            score=self._layout_score(positions)
+            if score<best_score:best,best_score=positions,score
+            if score[:2]==(0,0):
+                zero_candidates+=1
+                if zero_candidates>=40:return best
+        return best or circle(keys)
     def _positions(self,rect):
-        keys=sorted(self.nodes,key=self._sort_key);count=len(keys);positions={}
-        if count==1:positions[keys[0]]=rect.center();return positions
-        if count==2:
-            y=rect.center().y();positions[keys[0]]=QPointF(rect.left()+rect.width()*.22,y);positions[keys[1]]=QPointF(rect.right()-rect.width()*.22,y);return positions
-        center=rect.center();radius=min(rect.width(),rect.height())*.39
-        for index,key in enumerate(keys):
-            angle=-math.pi/2+(2*math.pi*index/count);positions[key]=QPointF(center.x()+radius*math.cos(angle),center.y()+radius*math.sin(angle))
-        return positions
+        return {key:QPointF(rect.left()+point.x()*rect.width(),rect.top()+point.y()*rect.height()) for key,point in self._layout.items()}
     def paintEvent(self,event):
         # Keep hit targets in sync with the current frame, including an empty diagram.
         self._hit_edges=[];self._arrow_segments=[];self._label_boxes=[]
@@ -205,7 +257,7 @@ class NetworkDiagramDialog(QDialog):
     def __init__(self,parent=None):
         super().__init__(parent);self.setWindowTitle("구간 연결 삽도");self.resize(740,540);self.setMinimumSize(630,450)
         layout=QVBoxLayout(self);note=QLabel("입력표에서 선택한 구간은 주황색으로 강조됩니다. 삽도의 선이나 가로명을 클릭하면 입력표의 해당 구간이 선택됩니다.");note.setObjectName("infoBar");layout.addWidget(note)
-        self.diagram=NetworkDiagramWidget();layout.addWidget(self.diagram,1);buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.button(QDialogButtonBox.Close).setText("닫기");buttons.rejected.connect(self.hide);layout.addWidget(buttons)
+        self.diagram=NetworkDiagramWidget();self.scroll=QScrollArea();self.scroll.setWidget(self.diagram);self.scroll.setWidgetResizable(False);self.scroll.setAlignment(Qt.AlignCenter);self.scroll.setFrameShape(QFrame.NoFrame);layout.addWidget(self.scroll,1);buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.button(QDialogButtonBox.Close).setText("닫기");buttons.rejected.connect(self.hide);layout.addWidget(buttons)
     def closeEvent(self,event):event.ignore();self.hide()
 
 
