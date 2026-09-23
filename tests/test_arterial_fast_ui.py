@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.7.3")
+        self.assertEqual(APP_VERSION,"1.7.4")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -271,9 +271,13 @@ class FastArterialUiTest(unittest.TestCase):
         self.assertEqual(self.page.choose_source.objectName(),"excelPrimaryButton");self.assertEqual(self.page.open_source.objectName(),"excelButton")
         self.assertIn("#107C41",FAST_STYLE);self.assertIn("#EAF5EE",FAST_STYLE)
 
-    def test_optional_columns_share_one_visual_color(self):
-        colors={self.table.item(0,column).background().color().name() for column in (17,18,19,20)}
-        self.assertEqual(colors,{"#f2f3f8"})
+    def test_optional_columns_use_four_subtle_visual_colors(self):
+        body_colors=[self.table.item(0,column).background().color().name() for column in (17,18,19,20)]
+        header_colors=[self.table.horizontalHeaderItem(column).background().color().name() for column in (17,18,19,20)]
+        self.assertEqual(body_colors,["#eef6ff","#edf8f2","#fff8e8","#f5f0ff"]);self.assertEqual(len(set(header_colors)),4)
+
+    def test_workflow_has_no_gray_gap_between_steps_and_page(self):
+        self.assertEqual(self.window.workflow.layout().spacing(),0)
 
     def test_user_guide_has_core_workflow_pages(self):
         dialog=UserGuideDialog(self.window);tabs=dialog.findChild(QTabWidget)

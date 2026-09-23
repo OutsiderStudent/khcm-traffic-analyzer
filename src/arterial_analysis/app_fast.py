@@ -31,10 +31,16 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.7.3"
+APP_VERSION = "1.7.4"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
+OPTIONAL_COLUMN_COLORS = {
+    17: ("#DCEBFA", "#EEF6FF"),
+    18: ("#DCEFE5", "#EDF8F2"),
+    19: ("#F8EBCB", "#FFF8E8"),
+    20: ("#E9E0F7", "#F5F0FF"),
+}
 EXTERNAL, INTERNAL = ROAD_CATEGORIES[0], ROAD_CATEGORIES[2]
 
 
@@ -540,7 +546,7 @@ class InputPage(QWidget):
         t.setItemDelegateForColumn(11,GreenTimeDelegate(True,0,10000,table=t,parent=t))
         t.setItemDelegateForColumn(13,BlankNumericDelegate(False,0,1,2,table=t,parent=t))
         for c in (19,20):t.setItemDelegateForColumn(c,FastComboDelegate(["","A","B","C","D","E","F","FF","FFF"],True,t,t))
-        for c in (17,18,19,20):t.horizontalHeaderItem(c).setBackground(QColor("#E7EAF4"));t.horizontalHeaderItem(c).setForeground(QColor("#414B67"))
+        for c,(header_color,_) in OPTIONAL_COLUMN_COLORS.items():t.horizontalHeaderItem(c).setBackground(QColor(header_color));t.horizontalHeaderItem(c).setForeground(QColor("#414B67"))
         for c in (17,18,19,20):t.setColumnHidden(c,True)
         t._replace_link_shortcut=QShortcut(QKeySequence("Ctrl+H"),t);t._replace_link_shortcut.setContext(Qt.WidgetWithChildrenShortcut);t._replace_link_shortcut.activated.connect(lambda table=t:self.replace_excel_sources(table))
         t.itemChanged.connect(lambda item,table=t:self.item_changed(table,item));t.currentCellChanged.connect(lambda r,c,pr,pc,table=t:(self.commit_row(table,pr,pc) if pr>=0 else None,self.cell_selected(table,r,c)));t.cellPressed.connect(lambda r,c,table=t:self.open_combo_on_click(table,table,r,c));t.frozen.pressed.connect(lambda index,table=t:self.open_combo_on_click(table,table.frozen,index.row(),index.column()));t.linkRequested.connect(lambda row,table=t:self.start_link(table,row));t.formulasPasted.connect(lambda entries,table=t:self.apply_pasted_formulas(table,entries));t.refreshRequested.connect(self.refresh_links);t.compareRequested.connect(self.toggle_compare);t.toggleOptionalRequested.connect(self.toggle_optional);t.addRequested.connect(self.add_pair);t.deleteRequested.connect(self.delete_selected);t.commitRequested.connect(lambda row,col,back,table=t:self.commit_row(table,row,col,back))
@@ -633,7 +639,7 @@ class InputPage(QWidget):
             if c==0:item.setFlags(Qt.ItemIsEnabled|Qt.ItemIsUserCheckable|Qt.ItemIsSelectable);item.setCheckState(Qt.Unchecked)
             if c in self.READONLY:item.setFlags(item.flags()&~Qt.ItemIsEditable)
             if c in (14,15):item.setBackground(QColor("#DDF4FF"));item.setForeground(QColor("#075985"))
-            if c in (17,18,19,20):item.setBackground(QColor("#F2F3F8"));item.setForeground(QColor("#414B67"))
+            if c in OPTIONAL_COLUMN_COLORS:item.setBackground(QColor(OPTIONAL_COLUMN_COLORS[c][1]));item.setForeground(QColor("#414B67"))
             if c in (12,13):
                 prefix="volume" if c==12 else "phf";address=getattr(s,f"{prefix}_source_cell");status=getattr(s,f"{prefix}_link_status");error=getattr(s,f"{prefix}_link_error")
                 icon_status="error" if error else (status or "manual");item.setIcon(excel_link_icon(icon_status));item.setData(Qt.UserRole+6,icon_status)
@@ -1066,7 +1072,7 @@ class InputPage(QWidget):
 class Workflow(QWidget):
     changed=Signal()
     def __init__(self,project):
-        super().__init__();self.project=project;self.results=[];layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);self.steps=QLabel();self.steps.setObjectName("stepBar");layout.addWidget(self.steps);self.stack=QStackedWidget();layout.addWidget(self.stack,1);self.input=InputPage(project);self.results_page=ResultsPage();from .app_v2 import DetailPage;self.detail_page=DetailPage()
+        super().__init__();self.project=project;self.results=[];layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0);self.steps=QLabel();self.steps.setObjectName("stepBar");layout.addWidget(self.steps);self.stack=QStackedWidget();layout.addWidget(self.stack,1);self.input=InputPage(project);self.results_page=ResultsPage();from .app_v2 import DetailPage;self.detail_page=DetailPage()
         for page in (self.input,self.results_page,self.detail_page):self.stack.addWidget(page)
         self.input.next_button.clicked.connect(lambda:self.go(1));self.results_page.back.clicked.connect(lambda:self.go(0));self.results_page.detail.clicked.connect(lambda:self.go(2));self.detail_page.back.clicked.connect(lambda:self.go(1));self.detail_page.input.clicked.connect(lambda:self.go(0));self.input.changed.connect(self.changed);self.results_page.changed.connect(self.changed);self.go(0)
     def load_project(self,p):self.project=p;self.input.project=p;self.input.current_key=None;self.input.refresh_tabs();self.go(0)
