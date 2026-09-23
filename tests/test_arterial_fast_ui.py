@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel, QRect, QSize, Qt
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication, QDialog, QFrame, QLineEdit, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QLineEdit, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
 
 from arterial_analysis.app_fast import APP_VERSION, FAST_STYLE, MainWindow, NetworkDiagramWidget, OptionalColorHeader, UserGuideDialog, build_network_graph, enable_native_file_dialogs
 from arterial_analysis.engine import SegmentInput
@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.7.7")
+        self.assertEqual(APP_VERSION,"1.7.8")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -128,6 +128,14 @@ class FastArterialUiTest(unittest.TestCase):
         self.window.show();self.page.toggle_optional();self.table.setCurrentCell(0,20);self.table.scrollToItem(self.table.item(0,20));APP.processEvents()
         self.assertGreater(self.table.horizontalScrollBar().value(),0);self.assertEqual(self.table.frozen.horizontalScrollBar().value(),0);self.assertEqual(self.table.frozen.columnViewportPosition(0),0);self.assertEqual(self.table.frozen.columnViewportPosition(1),self.table.frozen.columnWidth(0))
         self.assertEqual(self.table.frozen.horizontalHeader().offset(),0)
+
+    def test_frozen_columns_keep_row_alignment_during_vertical_scroll(self):
+        self.window.show();self.table.setRowCount(12);self.table._update_frozen_geometry();APP.processEvents()
+        self.table.verticalScrollBar().setValue(self.table.verticalScrollBar().maximum());APP.processEvents()
+        self.assertEqual(self.table.verticalScrollMode(),QAbstractItemView.ScrollPerPixel)
+        self.assertEqual(self.table.verticalScrollBar().value(),self.table.frozen.verticalScrollBar().value())
+        for row in range(self.table.rowCount()):
+            self.assertEqual(self.table.rowViewportPosition(row),self.table.frozen.rowViewportPosition(row))
 
     def test_internal_road_visibility(self):
         self.assertFalse(self.page.road_tabs.isTabVisible(1))

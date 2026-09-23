@@ -180,7 +180,7 @@ class FrozenInputTable(QTableWidget):
 
     def __init__(self,rows,columns,freeze_count=7,parent=None):
         super().__init__(rows,columns,parent); self.freeze_count=freeze_count; self.frozen=FrozenColumnsView(freeze_count,self); self.frozen.setModel(self.model()); self.frozen.setSelectionModel(self.selectionModel())
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn); self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn); self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel); self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.frozen.setFrameShape(QFrame.NoFrame); self.frozen.setStyleSheet("QTableView{border:0;border-right:2px solid #AEB9C8;background:white;}")
         self.frozen.verticalHeader().hide(); self.frozen.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.frozen.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.frozen.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel); self.frozen.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel); self.frozen.setEditTriggers(QAbstractItemView.AllEditTriggers)
         for col in range(columns): self.frozen.setColumnHidden(col,col>=freeze_count)
