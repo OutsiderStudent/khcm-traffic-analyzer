@@ -62,6 +62,14 @@ class ArterialUpdaterTest(unittest.TestCase):
         self.assertIn("Start-Process -FilePath $OldExe",script)
         self.assertIn("Start-Process -FilePath $FallbackExe",script)
 
+    def test_update_helper_resets_pyinstaller_environment_before_restart(self):
+        script=update_helper_script()
+        reset=script.index("PYINSTALLER_RESET_ENVIRONMENT")
+        self.assertLess(reset,script.index("Start-Process -FilePath $OldExe"))
+        self.assertLess(reset,script.index("Start-Process -FilePath $FallbackExe"))
+        self.assertIn("Env:_PYI_APPLICATION_HOME_DIR",script)
+        self.assertIn("Env:_MEIPASS2",script)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -27,6 +27,13 @@ def update_helper_script() -> str:
     return (
         "param([int]$OldPid,[string]$OldExe,[string]$NewExe,[string]$FallbackExe)\n"
         "Wait-Process -Id $OldPid -ErrorAction SilentlyContinue\n"
+        "# The replacement EXE is an independent PyInstaller process, not a child using the old _MEI directory.\n"
+        "$env:PYINSTALLER_RESET_ENVIRONMENT = '1'\n"
+        "Remove-Item Env:_PYI_APPLICATION_HOME_DIR -ErrorAction SilentlyContinue\n"
+        "Remove-Item Env:_PYI_ARCHIVE_FILE -ErrorAction SilentlyContinue\n"
+        "Remove-Item Env:_PYI_PARENT_PROCESS_LEVEL -ErrorAction SilentlyContinue\n"
+        "Remove-Item Env:_PYI_SPLASH_IPC -ErrorAction SilentlyContinue\n"
+        "Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue\n"
         "$Installed = $false\n"
         "for ($Attempt = 0; $Attempt -lt 20; $Attempt++) {\n"
         "  try { Copy-Item -LiteralPath $NewExe -Destination $OldExe -Force -ErrorAction Stop; $Installed = $true; break }\n"
