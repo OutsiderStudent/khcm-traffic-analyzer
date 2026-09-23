@@ -164,7 +164,7 @@ class FrozenInputTable(QTableWidget):
     def __init__(self,rows,columns,freeze_count=7,parent=None):
         super().__init__(rows,columns,parent); self.freeze_count=freeze_count; self.frozen=QTableView(self); self.frozen.setModel(self.model()); self.frozen.setSelectionModel(self.selectionModel())
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn); self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.frozen.setFrameShape(QFrame.NoFrame); self.frozen.setStyleSheet("QTableView{border:0;background:white;}")
+        self.frozen.setFrameShape(QFrame.NoFrame); self.frozen.setStyleSheet("QTableView{border:0;border-right:2px solid #AEB9C8;background:white;}")
         self.frozen.verticalHeader().hide(); self.frozen.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.frozen.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.frozen.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel); self.frozen.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel); self.frozen.setEditTriggers(QAbstractItemView.AllEditTriggers)
         for col in range(columns): self.frozen.setColumnHidden(col,col>=freeze_count)
         self.frozen.show(); self.frozen.raise_(); self.verticalScrollBar().valueChanged.connect(self.frozen.verticalScrollBar().setValue); self.frozen.verticalScrollBar().valueChanged.connect(self.verticalScrollBar().setValue); self.horizontalHeader().sectionResized.connect(self._sync_width)
@@ -189,7 +189,7 @@ class FrozenInputTable(QTableWidget):
         height=min(self.viewport().height()+header_h,header_h+rows_h+1)
         # Include the frozen view's trailing grid line.  Subtracting a pixel clipped
         # the first/last glyph at some Windows display scales.
-        self.frozen.setGeometry(self.frameWidth(),self.frameWidth(),max(0,width+1),max(header_h,height))
+        self.frozen.setGeometry(self.frameWidth(),self.frameWidth(),max(0,width+2),max(header_h,height))
 
     def resizeEvent(self,event): super().resizeEvent(event); self._update_frozen_geometry()
 
@@ -416,9 +416,7 @@ class InputPage(QWidget):
             if key[0]!="현황":
                 close=QToolButton(self.analysis_tabs); close.setText("×"); close.setObjectName("tabCloseButton"); close.setFixedSize(22,22); close.setCursor(Qt.PointingHandCursor); close.setToolTip("탭 삭제")
                 close.clicked.connect(lambda _=False,k=key:self._delete_analysis_key(k)); self.analysis_tabs.setTabButton(index,QTabBar.ButtonPosition.RightSide,close)
-        plus = self.analysis_tabs.addTab(""); self.analysis_tabs.setTabData(plus, None)
-        add=QToolButton(self.analysis_tabs); add.setText("+"); add.setObjectName("tabAddButton"); add.setFixedSize(22,22); add.setCursor(Qt.PointingHandCursor); add.setToolTip("분석 탭 추가")
-        add.clicked.connect(lambda _=False,index=plus:self.analysis_tabs.setCurrentIndex(index)); self.analysis_tabs.setTabButton(plus,QTabBar.ButtonPosition.RightSide,add)
+        plus = self.analysis_tabs.addTab("+"); self.analysis_tabs.setTabData(plus, None); self.analysis_tabs.setTabToolTip(plus,"분석 탭 추가")
         target = next((i for i, key in enumerate(keys) if key == current), 0)
         self.analysis_tabs.setCurrentIndex(target); self._changing_tabs = False
         if keys:

@@ -188,9 +188,11 @@ def _find_workbook(excel,path: str):
 
 def open_link_window(path: str,sheet: str="",address: str="",geometry: tuple[int,int,int,int] | None=None) -> dict:
     """기존 통합문서는 새 보기 창을 만들고, 프로그램이 연 파일은 소유권을 기록한다."""
-    pythoncom,client=_excel_modules();pythoncom.CoInitialize();excel=None;previous_move_after_return=None
+    pythoncom,client=_excel_modules();pythoncom.CoInitialize();excel=None;previous_move_after_return=None;created_application=False
     try:
-        excel=client.Dispatch("Excel.Application");previous_move_after_return=bool(excel.MoveAfterReturn);excel.MoveAfterReturn=False;workbook=_find_workbook(excel,path);opened=workbook is None
+        try:excel=client.GetActiveObject("Excel.Application")
+        except Exception:excel=client.Dispatch("Excel.Application");created_application=True
+        previous_move_after_return=bool(excel.MoveAfterReturn);excel.MoveAfterReturn=False;workbook=_find_workbook(excel,path);opened=workbook is None
         if opened:workbook=excel.Workbooks.Open(str(Path(path).resolve()),UpdateLinks=0,ReadOnly=False);window=workbook.Windows(1)
         else:window=workbook.NewWindow()
         excel.Visible=True;window.Activate()
@@ -201,10 +203,13 @@ def open_link_window(path: str,sheet: str="",address: str="",geometry: tuple[int
         window.WindowState=-4143;hwnd=int(window.Hwnd);caption=str(window.Caption)
         if geometry and hwnd:
             x,y,width,height=geometry;ctypes.windll.user32.SetWindowPos(hwnd,0,int(x),int(y),int(width),int(height),0x0004|0x0010)
-        return {"path":str(Path(path).resolve()),"caption":caption,"opened_workbook":opened,"hwnd":hwnd,"move_after_return":previous_move_after_return}
+        return {"path":str(Path(path).resolve()),"caption":caption,"opened_workbook":opened,"created_application":created_application,"hwnd":hwnd,"move_after_return":previous_move_after_return}
     except Exception:
         if excel is not None and previous_move_after_return is not None:
             try:excel.MoveAfterReturn=previous_move_after_return
+            except Exception:pass
+        if excel is not None and created_application:
+            try:excel.Quit()
             except Exception:pass
         raise
     finally:pythoncom.CoUninitialize()
@@ -227,9 +232,13 @@ def close_link_window(token: dict | None) -> None:
     closed=False
     try:
         excel=client.GetActiveObject("Excel.Application");excel.MoveAfterReturn=bool(token.get("move_after_return",True));workbook=_find_workbook(excel,token.get("path",""))
-        if workbook is None:return
+        if workbook is None:
+            if token.get("created_application"):excel.Quit();closed=True
+            return
         if token.get("opened_workbook"):
-            if bool(workbook.Saved):workbook.Close(SaveChanges=False);closed=True
+            if bool(workbook.Saved):
+                workbook.Close(SaveChanges=False);closed=True
+                if token.get("created_application"):excel.Quit()
         else:
             window=next((item for item in workbook.Windows if int(item.Hwnd)==int(token.get("hwnd",0))),None)
             if window is not None:window.Close();closed=True

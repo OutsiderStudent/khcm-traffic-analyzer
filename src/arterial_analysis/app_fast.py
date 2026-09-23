@@ -14,7 +14,7 @@ from uuid import uuid4
 from PySide6.QtCore import QEvent, QMimeData, QPointF, QRectF, QSettings, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QGuiApplication, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
-    QDialogButtonBox, QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QMainWindow,
+    QDialogButtonBox, QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QMainWindow,
     QInputDialog, QLineEdit, QMessageBox, QPushButton, QSpinBox, QStackedWidget, QTabBar, QTabWidget, QTableWidgetItem,
     QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
@@ -31,7 +31,7 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -175,6 +175,19 @@ def excel_link_icon(status="ok",pressed=False) -> QIcon:
     margin=2 if pressed else 0;painter.setRenderHint(QPainter.Antialiasing);painter.setPen(Qt.NoPen);painter.setBrush(QColor(colors.get(status,"#107C41")));painter.drawRoundedRect(margin,margin,14-margin*2,14-margin*2,2,2)
     font=QFont("Arial",8,QFont.Bold);painter.setFont(font);painter.setPen(QColor("white"));painter.drawText(pixmap.rect(),Qt.AlignCenter,"X");painter.end()
     return QIcon(pixmap)
+
+
+def excel_action_icon(kind="excel") -> QIcon:
+    """Excel 기능을 한눈에 구분하는 녹색 계열의 작은 동작 아이콘."""
+    pixmap=QPixmap(20,20);pixmap.fill(Qt.transparent);painter=QPainter(pixmap);painter.setRenderHint(QPainter.Antialiasing)
+    green=QColor("#107C41");painter.setPen(Qt.NoPen);painter.setBrush(green);painter.drawRoundedRect(1,2,14,16,2,2)
+    painter.setPen(QPen(QColor("white"),1.8,Qt.SolidLine,Qt.RoundCap));painter.drawLine(5,7,11,13);painter.drawLine(11,7,5,13)
+    painter.setPen(QPen(green,1.8,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin));painter.setBrush(QColor("white"));painter.drawEllipse(12,10,7,7)
+    if kind=="open":painter.drawLine(14,15,18,11);painter.drawLine(16,11,18,11);painter.drawLine(18,11,18,13)
+    elif kind=="apply":painter.drawLine(14,14,16,16);painter.drawLine(16,16,19,12)
+    elif kind=="refresh":painter.drawArc(13,11,5,5,25*16,280*16);painter.drawLine(17,11,19,11);painter.drawLine(19,11,19,13)
+    else:painter.drawLine(14,13,17,13);painter.drawLine(17,13,17,16)
+    painter.end();return QIcon(pixmap)
 
 
 def trash_icon(color="#64748B") -> QIcon:
@@ -443,10 +456,10 @@ class ReplaceExcelLinksDialog(QDialog):
     """선택한 연결식의 파일과 시트를 한 화면에서 바꾼다."""
     def __init__(self,path,sheet,parent=None):
         super().__init__(parent);self.setWindowTitle("Excel 연결 경로 일괄 변경");self.setMinimumWidth(560)
-        root=QVBoxLayout(self);form=QFormLayout();path_row=QHBoxLayout();self.path=QLineEdit(str(path or ""));self.path.setReadOnly(True);self.browse=QPushButton("파일 변경…");path_row.addWidget(self.path,1);path_row.addWidget(self.browse);form.addRow("연결 파일",path_row)
-        self.sheet=QComboBox();self.sheet.setEditable(False);form.addRow("연결 시트",self.sheet);root.addLayout(form)
+        root=QVBoxLayout(self);form=QFormLayout();path_row=QHBoxLayout();self.path=QLineEdit(str(path or ""));self.path.setObjectName("excelFormula");self.path.setReadOnly(True);self.browse=QPushButton("파일 변경…");self.browse.setObjectName("excelButton");self.browse.setIcon(excel_action_icon("open"));path_row.addWidget(self.path,1);path_row.addWidget(self.browse);form.addRow("연결 파일",path_row)
+        self.sheet=QComboBox();self.sheet.setObjectName("excelSheet");self.sheet.setEditable(False);form.addRow("연결 시트",self.sheet);root.addLayout(form)
         note=QLabel("선택한 교통량 셀의 주소는 유지하고 파일·시트 참조만 한 번에 바꿉니다.");note.setObjectName("infoBar");root.addWidget(note)
-        buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel);buttons.button(QDialogButtonBox.Ok).setText("일괄 반영");buttons.button(QDialogButtonBox.Cancel).setText("취소");buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);root.addWidget(buttons)
+        buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel);ok=buttons.button(QDialogButtonBox.Ok);ok.setText("일괄 반영");ok.setObjectName("excelPrimaryButton");ok.setIcon(excel_action_icon("apply"));buttons.button(QDialogButtonBox.Cancel).setText("취소");buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);root.addWidget(buttons)
         self.browse.clicked.connect(self.choose_file);self.load_sheets(str(path or ""),str(sheet or ""))
     def load_sheets(self,path,current=""):
         self.sheet.clear()
@@ -492,9 +505,13 @@ class InputPage(QWidget):
     INTEGER={7,8,10,11,12,17,18}; NUMERIC={7,8,10,11,12,13,14,17,18}; READONLY={0,9,14,15,16}
     def __init__(self,project):
         super().__init__();self.project=project;self.current_key=None;self._changing=False;self._clipboard=[];self._link_table=None;self._link_row=-1;self._link_col=-1;self._link_window=None;self._link_timer=None;self._enter_was_down=False;self._escape_was_down=False;self.diagram_dialog=None;self._refresh_timer=QTimer(self);self._refresh_timer.setSingleShot(True);self._refresh_timer.setInterval(450);self._refresh_timer.timeout.connect(self.refresh_links)
-        root=QVBoxLayout(self);root.setContentsMargins(14,9,14,8);root.setSpacing(6);title=QLabel("상황·연도별 분석구간 입력");title.setObjectName("pageTitle");root.addWidget(title)
+        outer=QVBoxLayout(self);outer.setContentsMargins(0,0,0,0);outer.setSpacing(0)
+        title_band=QFrame();title_band.setObjectName("inputTitleBand");title_layout=QVBoxLayout(title_band);title_layout.setContentsMargins(14,9,14,7);title=QLabel("상황·연도별 분석구간 입력");title.setObjectName("pageTitle");title_layout.addWidget(title);outer.addWidget(title_band)
+        content=QFrame();content.setObjectName("inputContent");root=QVBoxLayout(content);root.setContentsMargins(14,7,14,8);root.setSpacing(6);outer.addWidget(content,1)
         self.analysis_tabs=EditableTabBar();self.analysis_tabs.setExpanding(False);self.analysis_tabs.setDrawBase(False);root.addWidget(self.analysis_tabs)
-        source=QHBoxLayout();source.setSpacing(6);self.source_label=ElidedLabel("Excel 원본: 연결 안 됨");self.source_label.setObjectName("copyNote");source.addWidget(self.source_label,1);self.choose_source=QPushButton("Excel 원본 선택");self.open_source=QPushButton("원본 열기");self.apply_source=QPushButton("같은 원본 탭에 적용");self.refresh_source=QPushButton("새로고침 (F5)");self.sheet=QComboBox();self.sheet.setMinimumWidth(135)
+        source=QHBoxLayout();source.setSpacing(6);self.source_label=ElidedLabel("Excel 원본: 연결 안 됨");self.source_label.setObjectName("excelSourceLabel");source.addWidget(self.source_label,1);self.choose_source=QPushButton("Excel 원본 선택");self.open_source=QPushButton("원본 열기");self.apply_source=QPushButton("같은 원본 탭에 적용");self.refresh_source=QPushButton("새로고침 (F5)");self.sheet=QComboBox();self.sheet.setObjectName("excelSheet");self.sheet.setMinimumWidth(135)
+        self.choose_source.setObjectName("excelPrimaryButton");self.open_source.setObjectName("excelButton");self.apply_source.setObjectName("excelButton");self.refresh_source.setObjectName("excelButton")
+        for button,kind in ((self.choose_source,"excel"),(self.open_source,"open"),(self.apply_source,"apply"),(self.refresh_source,"refresh")):button.setIcon(excel_action_icon(kind));button.setIconSize(QSize(16,16))
         for widget in (self.choose_source,self.open_source,self.apply_source,self.sheet,self.refresh_source):source.addWidget(widget)
         root.addLayout(source);self.tab_memo=QLineEdit();self.tab_memo.setObjectName("tabMemo");self.tab_memo.setPlaceholderText("이 분석 탭에 대한 한 줄 메모를 입력하세요.");self.tab_memo.setClearButtonEnabled(True);root.addWidget(self.tab_memo)
         formula_row=QHBoxLayout();fx=QLabel("fx");fx.setObjectName("formulaPrefix");fx.setAlignment(Qt.AlignCenter);fx.setFixedWidth(32);self.formula=QLineEdit();self.formula.setObjectName("formulaBar");self.formula.setClearButtonEnabled(True);self.formula.setPlaceholderText("교통량·PHF 셀 주소(H12, H12:H15, H12,H15)를 입력하거나 = 키로 Excel에서 선택하세요.");formula_row.addWidget(fx);formula_row.addWidget(self.formula,1);root.addLayout(formula_row);self._formula_target=None
@@ -512,7 +529,7 @@ class InputPage(QWidget):
     def _make_table(self):
         t=FastInputTable(0,len(self.HEADERS));t.setHorizontalHeaderLabels(self.HEADERS);t.verticalHeader().hide();t.verticalHeader().setDefaultSectionSize(34);t.frozen.verticalHeader().setDefaultSectionSize(34);t.setAlternatingRowColors(True);t.setSelectionMode(QAbstractItemView.ExtendedSelection);t.setSelectionBehavior(QAbstractItemView.SelectItems);t.setEditTriggers(QAbstractItemView.AllEditTriggers);t.setIconSize(QSize(13,13));t.frozen.setIconSize(QSize(13,13));t.horizontalHeader().setFixedHeight(84);t.frozen.horizontalHeader().setFixedHeight(84)
         header_font=t.horizontalHeader().font();header_font.setPointSizeF(7.8);t.horizontalHeader().setFont(header_font);t.frozen.horizontalHeader().setFont(header_font)
-        widths=[44,82,40,98,30,40,98]+[70]*14
+        widths=[44,82,40,118,30,40,118]+[70]*14
         for c,w in enumerate(widths):t.setColumnWidth(c,w)
         t.set_shared_delegate(0,CenterCheckDelegate(t))
         for c,values,editable in ((1,self.road_names,True),(3,self.intersection_names,True),(4,["→","←"],False),(6,self.intersection_names,True)):
@@ -522,6 +539,7 @@ class InputPage(QWidget):
         t.setItemDelegateForColumn(11,GreenTimeDelegate(True,0,10000,table=t,parent=t))
         t.setItemDelegateForColumn(13,BlankNumericDelegate(False,0,1,2,table=t,parent=t))
         for c in (19,20):t.setItemDelegateForColumn(c,FastComboDelegate(["","A","B","C","D","E","F","FF","FFF"],True,t,t))
+        for c in (17,18,19,20):t.horizontalHeaderItem(c).setBackground(QColor("#E7EAF4"));t.horizontalHeaderItem(c).setForeground(QColor("#414B67"))
         for c in (17,18,19,20):t.setColumnHidden(c,True)
         t._replace_link_shortcut=QShortcut(QKeySequence("Ctrl+H"),t);t._replace_link_shortcut.setContext(Qt.WidgetWithChildrenShortcut);t._replace_link_shortcut.activated.connect(lambda table=t:self.replace_excel_sources(table))
         t.itemChanged.connect(lambda item,table=t:self.item_changed(table,item));t.currentCellChanged.connect(lambda r,c,pr,pc,table=t:(self.commit_row(table,pr,pc) if pr>=0 else None,self.cell_selected(table,r,c)));t.cellPressed.connect(lambda r,c,table=t:self.open_combo_on_click(table,table,r,c));t.frozen.pressed.connect(lambda index,table=t:self.open_combo_on_click(table,table.frozen,index.row(),index.column()));t.linkRequested.connect(lambda row,table=t:self.start_link(table,row));t.formulasPasted.connect(lambda entries,table=t:self.apply_pasted_formulas(table,entries));t.refreshRequested.connect(self.refresh_links);t.compareRequested.connect(self.toggle_compare);t.toggleOptionalRequested.connect(self.toggle_optional);t.addRequested.connect(self.add_pair);t.deleteRequested.connect(self.delete_selected);t.commitRequested.connect(lambda row,col,back,table=t:self.commit_row(table,row,col,back))
@@ -539,7 +557,7 @@ class InputPage(QWidget):
         for key in keys:
             i=self.analysis_tabs.addTab(self.tab_label(key));self.analysis_tabs.setTabData(i,key);self.analysis_tabs.setTabTextColor(i,QColor(SCENARIO_COLORS[key[0]]))
             if key[0]!="현황":b=QToolButton(self.analysis_tabs);b.setText("×");b.setObjectName("tabCloseButton");b.setFixedSize(22,22);b.clicked.connect(lambda _=False,k=key:self.delete_tab(k));self.analysis_tabs.setTabButton(i,QTabBar.RightSide,b)
-        i=self.analysis_tabs.addTab("");self.analysis_tabs.setTabData(i,None);add=QToolButton(self.analysis_tabs);add.setText("+");add.setObjectName("tabAddButton");add.setFixedSize(22,22);add.setToolTip("분석 탭 추가");add.clicked.connect(lambda _=False,index=i:self.analysis_tabs.setCurrentIndex(index));self.analysis_tabs.setTabButton(i,QTabBar.RightSide,add);target=next((n for n,k in enumerate(keys) if k==current),0);self.analysis_tabs.setCurrentIndex(target);self._changing=False
+        i=self.analysis_tabs.addTab("+");self.analysis_tabs.setTabData(i,None);self.analysis_tabs.setTabToolTip(i,"분석 탭 추가");target=next((n for n,k in enumerate(keys) if k==current),0);self.analysis_tabs.setCurrentIndex(target);self._changing=False
         if keys:self.load_key(keys[target])
     def _default_source(self,scenario,year):
         keys=self.project.tab_keys()
@@ -615,6 +633,7 @@ class InputPage(QWidget):
             if c==0:item.setFlags(Qt.ItemIsEnabled|Qt.ItemIsUserCheckable|Qt.ItemIsSelectable);item.setCheckState(Qt.Unchecked)
             if c in self.READONLY:item.setFlags(item.flags()&~Qt.ItemIsEditable)
             if c in (14,15):item.setBackground(QColor("#DDF4FF"));item.setForeground(QColor("#075985"))
+            if c in (17,18,19,20):item.setBackground(QColor("#F2F3F8"));item.setForeground(QColor("#414B67"))
             if c in (12,13):
                 prefix="volume" if c==12 else "phf";address=getattr(s,f"{prefix}_source_cell");status=getattr(s,f"{prefix}_link_status");error=getattr(s,f"{prefix}_link_error")
                 icon_status="error" if error else (status or "manual");item.setIcon(excel_link_icon(icon_status));item.setData(Qt.UserRole+6,icon_status)
@@ -1068,6 +1087,20 @@ class Workflow(QWidget):
         labels=["○ 구간 입력","○ 분석 결과","○ 세부 계산결과"];labels[index]=labels[index].replace("○","●");self.steps.setText("     ".join(labels))
 
 
+class UserGuideDialog(QDialog):
+    def __init__(self,parent=None):
+        super().__init__(parent);self.setWindowTitle("사용설명서");self.resize(760,590);self.setMinimumSize(650,480);root=QVBoxLayout(self);tabs=QTabWidget();root.addWidget(tabs,1)
+        pages={
+            "빠른 시작":"""<h2>기본 분석 순서</h2><ol><li>현황 탭에서 가로명과 양쪽 교차로를 입력합니다.</li><li>구간길이, 차로수, 주기, 녹색시간, 교통량과 PHF를 입력합니다.</li><li>필요하면 분석 탭을 추가하고 현황 자료를 기준으로 수정합니다.</li><li><b>분석 결과 보기</b>에서 평균통행속도와 서비스수준을 확인합니다.</li><li>세부 계산결과와 입력 경고를 검토한 뒤 프로젝트를 저장합니다.</li></ol><p>Enter·Tab으로 다음 입력 셀, Shift+Enter·Shift+Tab으로 이전 셀로 이동합니다.</p>""",
+            "Excel 연결":"""<h2>Excel 셀 연결</h2><p><b>Excel 원본 선택</b>에서 현재 분석 탭의 파일과 시트를 연결합니다. 교통량 또는 PHF 셀의 Excel 아이콘이나 <b>=</b> 키를 누르면 원본이 열립니다.</p><ol><li>Excel에서 셀 또는 범위를 선택합니다.</li><li>Enter를 누르면 주소와 저장된 숫자값을 가져오고 연결용 Excel 창이 닫힙니다.</li><li>교통량은 여러 셀·범위의 합계를 사용할 수 있고 PHF는 한 셀만 연결할 수 있습니다.</li></ol><p>주소창에 H12, H12:H15, H12,H15처럼 직접 입력할 수도 있습니다. 원본 값을 바꾼 뒤 저장하고 F5를 누르면 화면의 연결값을 갱신합니다.</p><p>초록 아이콘은 정상, 회색은 수기 입력, 황색은 확인 필요, 빨강은 연결 오류를 뜻합니다.</p>""",
+            "입력과 검토":"""<h2>입력표</h2><ul><li>한 구간은 두 방향 행으로 구성되며, 공통 교차로 정보는 병합해 표시합니다.</li><li>교차로 번호와 이름은 프로젝트 안에서 서로 동기화됩니다.</li><li>도착교차로가 같으면 주기와 PHF 연결정보를 공유하지만 녹색시간은 방향별로 유지합니다.</li><li>PHF는 0.00~1.00, 편도 차로수는 최대 10이며 녹색시간은 주기를 넘을 수 없습니다.</li><li>F7 보조 입력에는 보고서용 길이·교통량과 참고 LOS를 입력합니다.</li></ul><p>구간 연결 삽도(F6)에서 노드와 가로 연결관계를 확인하고, 선을 누르면 입력표의 해당 구간이 선택됩니다.</p>""",
+            "결과와 저장":"""<h2>결과 확인</h2><p>분석 결과에는 도로유형, 구간거리, 교통량, 평균통행속도와 LOS가 표시됩니다. 상세 계산에서는 편람 공식에 사용된 중간값을 확인할 수 있습니다.</p><ul><li>보고서 교통량이 비어 있으면 분석 교통량을 그대로 사용합니다.</li><li>Excel 연결 오류가 있으면 마지막 정상값을 유지하되 결과 화면에 경고합니다.</li><li>Ctrl+Z는 되돌리기, Ctrl+Y는 다시 실행입니다.</li><li>변경 기록은 프로젝트와 함께 저장되며 다른 이름으로 저장해도 유지됩니다.</li></ul>""",
+            "문제 해결":"""<h2>자주 확인할 사항</h2><ul><li><b>Excel 값이 갱신되지 않음:</b> 원본을 저장한 뒤 F5를 누르세요.</li><li><b>연결 오류:</b> 원본 경로와 시트명, 셀 주소를 확인하거나 Ctrl+H로 선택한 연결의 경로를 일괄 변경하세요.</li><li><b>입력값이 분석되지 않음:</b> 필수 숫자칸과 양쪽 교차로가 모두 입력되었는지 확인하세요.</li><li><b>화면에서 열이 보이지 않음:</b> 아래 가로 스크롤바를 사용하거나 F7로 보조 입력을 접으세요.</li></ul><p>분석 결과는 입력자료와 적용 조건에 따라 달라지므로 최종 성과품 작성 전 세부 계산결과를 검토해야 합니다.</p>""",
+        }
+        for title,body in pages.items():browser=QTextBrowser();browser.setHtml(body);browser.setOpenExternalLinks(False);tabs.addTab(browser,title)
+        buttons=QDialogButtonBox(QDialogButtonBox.Close);buttons.button(QDialogButtonBox.Close).setText("닫기");buttons.rejected.connect(self.reject);root.addWidget(buttons)
+
+
 class ShortcutDialog(QDialog):
     def __init__(self,parent=None):
         super().__init__(parent);self.setWindowTitle("키보드 단축키");self.setMinimumWidth(510);layout=QVBoxLayout(self);layout.addWidget(QLabel("Enter / Tab : 입력 확정 후 다음 셀\nShift+Enter / Shift+Tab : 이전 셀\n방향키 : 셀 이동    F2 : 셀 편집    Delete : 내용 지우기\nCtrl+C / V / X : 범위 복사·붙여넣기·잘라내기\nCtrl+D / Ctrl+R : 아래/오른쪽 채우기\nCtrl+Z : 되돌리기    Ctrl+Y / Ctrl+Shift+Z : 다시 실행\nCtrl+H : 선택한 Excel 연결 셀의 파일·시트 경로 일괄 변경\nCtrl+PageUp / PageDown : 분석 탭 이동\nCtrl+T : 분석 탭 추가    Ctrl+숫자패드 +/- : 구간 추가/삭제\n= : 선택한 교통량·PHF 셀을 Excel 셀에 연결\nF5 : Excel 저장값 일괄 새로고침    F6 : 구간 연결 삽도\nF7 : 보조 입력 열    F8 : 같은 연도 간이 비교"));b=QDialogButtonBox(QDialogButtonBox.Close);b.button(QDialogButtonBox.Close).setText("닫기");b.rejected.connect(self.reject);layout.addWidget(b)
@@ -1080,7 +1113,7 @@ class MainWindow(QMainWindow):
         menu=self.menuBar().addMenu("프로젝트")
         for label,slot,shortcut in (("새 프로젝트",self.new,"Ctrl+N"),("열기",self.open,"Ctrl+O"),("저장",self.save,"Ctrl+S"),("다른 이름으로 저장",self.save_as,"Ctrl+Shift+S")):
             a=QAction(label,self);a.setShortcut(shortcut);a.triggered.connect(slot);menu.addAction(a)
-        help_menu=self.menuBar().addMenu("도움말");short=QAction("키보드 단축키",self);short.setShortcut("F1");short.triggered.connect(lambda:ShortcutDialog(self).exec());help_menu.addAction(short)
+        help_menu=self.menuBar().addMenu("도움말");guide=QAction("사용설명서",self);guide.triggered.connect(lambda:UserGuideDialog(self).exec());help_menu.addAction(guide);short=QAction("키보드 단축키",self);short.setShortcut("F1");short.triggered.connect(lambda:ShortcutDialog(self).exec());help_menu.addAction(short)
         self.updater=UpdateController(APP_VERSION,self);update_action=QAction("업데이트 확인",self);update_action.triggered.connect(lambda:self.updater.check(True));help_menu.addAction(update_action)
         about=QAction("프로그램 정보",self);about.triggered.connect(self.show_about);help_menu.addAction(about)
         if QGuiApplication.platformName().lower()!="offscreen":QTimer.singleShot(2500,lambda:self.updater.check(False))
@@ -1192,13 +1225,24 @@ class MainWindow(QMainWindow):
 
 
 FAST_STYLE=STYLE+"""
+QFrame#inputTitleBand{background:#FFFFFF;border:0;border-bottom:1px solid #D7E0EA}
+QFrame#inputContent{background:#F1F4F8;border:0}
 QComboBox#cellComboEditor{padding:0 18px 0 3px;min-height:0;border-radius:0}
 QComboBox#cellComboEditor::drop-down{width:16px;border-left:1px solid #D8E0E9;border-radius:0;background:#F7FAFC}
 QComboBox#cellComboEditor::down-arrow{width:9px;height:6px}
 QComboBox#cellComboEditor QLineEdit{padding:0 2px;min-height:0;border:0;border-radius:0;background:transparent;color:#253044}
-QLabel#formulaPrefix{background:#F0F5FF;color:#1769D2;border:1px solid #B8CBE2;border-radius:6px;font-size:10pt;font-weight:800;padding:4px 0}
-QLineEdit#formulaBar{background:#FFFFFF;border:1px solid #B8CBE2;border-radius:6px;padding:5px 8px;color:#253044;min-height:18px}
-QLineEdit#formulaBar:focus{border:2px solid #2375E8;padding:4px 7px}
+QLabel#formulaPrefix{background:#107C41;color:#FFFFFF;border:1px solid #0B6535;border-radius:6px;font-size:10pt;font-weight:800;padding:4px 0}
+QLineEdit#formulaBar,QLineEdit#excelFormula{background:#EAF5EE;border:1px solid #8CC6A3;border-radius:6px;padding:5px 8px;color:#153B26;min-height:18px;selection-background-color:#B9DFC7;selection-color:#153B26}
+QLineEdit#formulaBar:focus,QLineEdit#excelFormula:focus{background:#F3FAF5;border:2px solid #107C41;padding:4px 7px}
+QLabel#excelSourceLabel{color:#126C3A;padding:3px;font-weight:700}
+QComboBox#excelSheet{background:#F3FAF5;color:#153B26;border:1px solid #8CC6A3}
+QComboBox#excelSheet:focus{border:2px solid #107C41}
+QPushButton#excelButton{background:#F3FAF5;color:#0F6A38;border:1px solid #8CC6A3}
+QPushButton#excelButton:hover{background:#E2F2E8;border-color:#4FA876}
+QPushButton#excelButton:pressed{background:#CDE9D7;border-color:#107C41}
+QPushButton#excelPrimaryButton{background:#107C41;color:#FFFFFF;border:1px solid #107C41}
+QPushButton#excelPrimaryButton:hover{background:#0D6F3A;border-color:#0D6F3A}
+QPushButton#excelPrimaryButton:pressed{background:#095C30;border-color:#095C30}
 QLabel#shortcutBar{background:#172033;color:white;border-radius:6px;padding:5px 8px;font-size:8pt}
 QLabel#compareBar{background:#E8F5E9;color:#176B3A;border:1px solid #8AC9A4;border-radius:7px;padding:6px 9px}
 QLabel#linkWarning{background:#FFF3CD;color:#7A4B00;border:1px solid #F4C95D;border-radius:7px;padding:7px 10px;font-weight:700}

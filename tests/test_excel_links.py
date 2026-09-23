@@ -31,6 +31,20 @@ class ExcelLinksTest(unittest.TestCase):
             close_link_window(token)
         self.assertTrue(excel.MoveAfterReturn);window.Close.assert_called_once()
 
+    def test_excel_started_by_program_is_quit_after_capture(self):
+        path=str((Path(tempfile.gettempdir())/"program-opened.xlsx").resolve())
+        window=SimpleNamespace(Hwnd=654,Caption="program-opened.xlsx",WindowState=0,Activate=Mock())
+        class Windows(list):
+            def __call__(self,index):return self[index-1]
+        workbook=SimpleNamespace(FullName=path,Windows=Windows([window]),Saved=True,Close=Mock())
+        class Workbooks(list):
+            def Open(self,*_args,**_kwargs):self.append(workbook);return workbook
+        excel=SimpleNamespace(MoveAfterReturn=True,Workbooks=Workbooks(),Visible=False,Quit=Mock())
+        pythoncom=SimpleNamespace(CoInitialize=Mock(),CoUninitialize=Mock());client=SimpleNamespace(Dispatch=Mock(return_value=excel),GetActiveObject=Mock(side_effect=[RuntimeError("not running"),excel]))
+        with patch("arterial_analysis.excel_links._excel_modules",return_value=(pythoncom,client)):
+            token=open_link_window(path);self.assertTrue(token["created_application"]);close_link_window(token)
+        workbook.Close.assert_called_once_with(SaveChanges=False);excel.Quit.assert_called_once()
+
     def test_external_formula_round_trip(self):
         path = str((Path(tempfile.gettempdir()) / "교통량 자료.xlsx").resolve())
         formula = format_external_formula(path, "미시행 2033", "h17")

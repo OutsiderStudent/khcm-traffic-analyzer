@@ -7,9 +7,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel, QRect, Qt
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QPushButton, QStyleOptionViewItem, QToolButton
+from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
 
-from arterial_analysis.app_fast import APP_VERSION, FAST_STYLE, MainWindow, NetworkDiagramWidget, build_network_graph, enable_native_file_dialogs
+from arterial_analysis.app_fast import APP_VERSION, FAST_STYLE, MainWindow, NetworkDiagramWidget, UserGuideDialog, build_network_graph, enable_native_file_dialogs
 from arterial_analysis.engine import SegmentInput
 from arterial_analysis.motion import MotionController
 
@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.7.1")
+        self.assertEqual(APP_VERSION,"1.7.2")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -246,11 +246,28 @@ class FastArterialUiTest(unittest.TestCase):
             self.assertLessEqual(max(map(len,header.splitlines())),6)
         self.assertGreaterEqual(self.table.horizontalHeader().height(),84)
 
-    def test_analysis_tab_close_and_add_controls_are_same_size(self):
+    def test_analysis_tab_plus_is_centered_text_and_close_is_compact(self):
         self.window.project.ensure_tab("사업 미시행시",2033);self.page.refresh_tabs(("사업 미시행시",2033))
-        close=self.page.analysis_tabs.findChild(QToolButton,"tabCloseButton");add=self.page.analysis_tabs.findChild(QToolButton,"tabAddButton")
-        self.assertIsNotNone(close);self.assertIsNotNone(add);self.assertEqual(close.size(),add.size());self.assertEqual(close.size().width(),22)
+        close=self.page.analysis_tabs.findChild(QToolButton,"tabCloseButton");plus=self.page.analysis_tabs.count()-1
+        self.assertIsNotNone(close);self.assertEqual(close.size().width(),22);self.assertEqual(self.page.analysis_tabs.tabText(plus),"+");self.assertIsNone(self.page.analysis_tabs.tabButton(plus,QTabBar.RightSide))
         self.assertIn("border:1px solid #D8E1EC",FAST_STYLE)
+
+    def test_intersection_names_are_wider_and_frozen_boundary_is_visible(self):
+        self.assertEqual(self.table.columnWidth(3),118);self.assertEqual(self.table.columnWidth(6),118)
+        self.assertIn("border-right:2px solid #AEB9C8",self.table.frozen.styleSheet())
+
+    def test_excel_controls_use_green_visual_system(self):
+        for button in (self.page.choose_source,self.page.open_source,self.page.apply_source,self.page.refresh_source):self.assertFalse(button.icon().isNull())
+        self.assertEqual(self.page.choose_source.objectName(),"excelPrimaryButton");self.assertEqual(self.page.open_source.objectName(),"excelButton")
+        self.assertIn("#107C41",FAST_STYLE);self.assertIn("#EAF5EE",FAST_STYLE)
+
+    def test_optional_columns_share_one_visual_color(self):
+        colors={self.table.item(0,column).background().color().name() for column in (17,18,19,20)}
+        self.assertEqual(colors,{"#f2f3f8"})
+
+    def test_user_guide_has_core_workflow_pages(self):
+        dialog=UserGuideDialog(self.window);tabs=dialog.findChild(QTabWidget)
+        self.assertIsNotNone(tabs);self.assertGreaterEqual(tabs.count(),5);self.assertIn("Excel 연결",[tabs.tabText(i) for i in range(tabs.count())]);dialog.deleteLater()
 
     def test_lane_count_is_center_aligned(self):
         self.table.item(0,8).setText("10");self.page.commit_row(self.table,0,8)
