@@ -29,7 +29,7 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.6.2"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -153,17 +153,33 @@ def blank_project(year=2026):
 from PySide6.QtWidgets import QStyledItemDelegate
 
 
+class CompactCellComboBox(QComboBox):
+    """표 셀에서는 화살표보다 입력 문구에 폭을 우선 배정한다."""
+    def _fit_line_edit(self):
+        line_edit=self.lineEdit()
+        if line_edit is not None:
+            line_edit.setGeometry(3,1,max(10,self.width()-23),max(1,self.height()-2))
+    def resizeEvent(self,event):
+        super().resizeEvent(event);self._fit_line_edit();QTimer.singleShot(0,self._fit_line_edit)
+    def showEvent(self,event):
+        super().showEvent(event);self._fit_line_edit();QTimer.singleShot(0,self._fit_line_edit)
+
+
 class FastComboDelegate(QStyledItemDelegate):
     def __init__(self, values, editable=True, table=None, parent=None):
         super().__init__(parent); self.values=values; self.editable=editable;self.table=table
     def createEditor(self,parent,option,index):
-        editor=QComboBox(parent); editor.setEditable(self.editable); editor.setInsertPolicy(QComboBox.NoInsert)
+        editor=CompactCellComboBox(parent); editor.setEditable(self.editable); editor.setInsertPolicy(QComboBox.NoInsert)
+        editor.setObjectName("cellComboEditor")
         values=self.values() if callable(self.values) else self.values; editor.addItems([str(v) for v in values if str(v)])
         if editor.lineEdit():
             editor.completer().setFilterMode(Qt.MatchContains);editor.completer().setCaseSensitivity(Qt.CaseInsensitive)
         self._install_nav(editor,index);return editor
     def setEditorData(self,editor,index): editor.setCurrentText(str(index.data() or "")); editor.lineEdit().selectAll() if editor.lineEdit() else None
     def setModelData(self,editor,model,index): model.setData(index,editor.currentText().strip())
+    def updateEditorGeometry(self,editor,option,index):
+        super().updateEditorGeometry(editor,option,index)
+        if isinstance(editor,CompactCellComboBox):editor._fit_line_edit()
     def _install_nav(self,editor,index):
         for target in (editor,editor.lineEdit()):
             if target:target.setProperty("navRow",index.row());target.setProperty("navCol",index.column());target.setProperty("navEditor",editor);target.installEventFilter(self)
@@ -932,6 +948,10 @@ class MainWindow(QMainWindow):
 
 
 FAST_STYLE=STYLE+"""
+QComboBox#cellComboEditor{padding:0 18px 0 3px;min-height:0;border-radius:0}
+QComboBox#cellComboEditor::drop-down{width:16px;border-left:1px solid #D8E0E9;border-radius:0;background:#F7FAFC}
+QComboBox#cellComboEditor::down-arrow{width:9px;height:6px}
+QComboBox#cellComboEditor QLineEdit{padding:0 2px;min-height:0;border:0;border-radius:0;background:transparent;color:#253044}
 QLabel#formulaPrefix{background:#F0F5FF;color:#1769D2;border:1px solid #B8CBE2;border-radius:7px;font-size:11pt;font-weight:800;padding:5px 0}
 QLineEdit#formulaBar{background:#FFFFFF;border:1px solid #B8CBE2;border-radius:7px;padding:6px 10px;color:#253044;min-height:20px}
 QLineEdit#formulaBar:focus{border:2px solid #2375E8;padding:5px 9px}
