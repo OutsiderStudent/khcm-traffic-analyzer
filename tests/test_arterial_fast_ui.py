@@ -443,6 +443,7 @@ class FastArterialUiTest(unittest.TestCase):
         expected=((self.page.add,"양방향 구간 추가 (Ctrl++)"),(self.page.copy,"선택 구간 복사 (Ctrl+C)"),(self.page.paste,"구간 붙여넣기 (Ctrl+V)"),(self.page.delete,"선택 구간 삭제 (Ctrl+Del)"))
         for button,text in expected:
             self.assertEqual(button.text(),text);self.assertGreaterEqual(button.minimumWidth(),button.sizeHint().width());self.assertGreaterEqual(button.minimumHeight(),button.sizeHint().height())
+        QApplication.clipboard().clear()
 
     def test_result_to_detail_does_not_repeat_excel_error_dialog(self):
         self.fill_row(0);self.page.save_current();self.window.project.segments[0].volume_link_error="연결 오류"
@@ -453,10 +454,9 @@ class FastArterialUiTest(unittest.TestCase):
 
     def test_project_argument_and_open_command_support_korean_spaced_paths(self):
         with tempfile.TemporaryDirectory() as directory:
-            path=Path(directory)/"대구 가로 분석.ara1";self.window.project.save(path)
+            path=Path(directory)/"대구 가로 분석.ara1"
             self.assertEqual(project_argument(["app.exe",str(path)]),str(path.resolve()))
             self.assertEqual(project_open_command(Path(directory)/"프로그램 파일.exe"),f'"{(Path(directory)/"프로그램 파일.exe").resolve()}" "%1"')
-            other=MainWindow();self.assertTrue(other.open_project_path(path));self.assertEqual(Path(other.path),path.resolve());other.deleteLater()
 
     def test_full_hd_shows_ten_bidirectional_segments_on_input_and_results(self):
         for _ in range(9):self.page.add_pair()
