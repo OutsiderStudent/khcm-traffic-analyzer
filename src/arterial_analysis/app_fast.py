@@ -27,12 +27,13 @@ from .engine import FUNCTIONAL_CLASSES, ROAD_CATEGORIES, SegmentInput, analyze_s
 from .excel_links import (SUPPORTED_EXTENSIONS, active_selection, close_link_window, format_external_formula, list_sheets,
     normalize_expression, open_and_activate, open_link_window, parse_external_formula, read_saved_cell, read_saved_cells, read_saved_expressions)
 from .project import ArterialProject
+from .intersection_import import match_intersection_los, read_intersection_los
 from .motion import MotionController, TactileProxyStyle
 from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.8.1"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -41,6 +42,7 @@ OPTIONAL_COLUMN_COLORS = {
     18: ("#CBEBD8", "#DDF4E7"),
     19: ("#F6DFA4", "#FFF0C7"),
     20: ("#DDCBF4", "#EEE2FF"),
+    21: ("#F3CED4", "#FBE3E7"),
 }
 EXTERNAL, INTERNAL = ROAD_CATEGORIES[0], ROAD_CATEGORIES[2]
 
@@ -504,7 +506,7 @@ class FastInputTable(FrozenInputTable):
         if mods&Qt.ControlModifier and key==Qt.Key_Minus: self.deleteRequested.emit(); event.accept(); return
         if mods&Qt.ShiftModifier and key==Qt.Key_Space: self._select_pair(); event.accept(); return
         super().keyPressEvent(event)
-    def _editable_columns(self): return [c for c in (1,2,3,4,5,6,7,8,10,11,12,13,17,18,19,20) if not self.isColumnHidden(c)]
+    def _editable_columns(self): return [c for c in (1,2,3,4,5,6,7,8,10,11,12,13,17,18,19,20,21) if not self.isColumnHidden(c)]
     def _move_editable(self,delta):
         if self.rowCount()==0:return
         cols=self._editable_columns(); current=(self.currentRow(),self.currentColumn()); positions=[]
@@ -650,8 +652,8 @@ class FastDetailDialog(SegmentDetailDialog):
 
 class InputPage(QWidget):
     changed=Signal()
-    HEADERS=["선택","가로명","교차로\n번호","교차로명","↔","교차로\n번호","교차로명","구간길이\n(m)","본선\n차로수\n(편도)","유형\n번호","주기\n(초)","녹색시간\n(초)","교통량\n(대/시)","PHF","평균\n통행속도\n(km/h)","서비스수준\n(LOS)","상세","보고서\n구간길이\n(m)","보고서\n교통량\n(대/시)","교차로\n서비스수준\n(LOS)\n(참고)","접근로\n서비스수준\n(LOS)\n(참고)"]
-    INTEGER={7,8,10,11,12,17,18}; NUMERIC={7,8,10,11,12,13,14,17,18}; READONLY={0,9,14,15,16}
+    HEADERS=["선택","가로명","교차로\n번호","교차로명","↔","교차로\n번호","교차로명","구간길이\n(m)","본선\n차로수\n(편도)","유형\n번호","주기\n(초)","녹색시간\n(초)","교통량\n(대/시)","PHF","평균\n통행속도\n(km/h)","서비스수준\n(LOS)","상세","보고서\n구간길이\n(m)","보고서\n교통량\n(대/시)","교차로\n서비스수준\n(LOS)\n(참고)","접근로\n서비스수준\n(LOS)\n(참고)","제한속도\n(km/h)\n(참고)"]
+    INTEGER={7,8,10,11,12,17,18,21}; NUMERIC={7,8,10,11,12,13,14,17,18,21}; READONLY={0,9,14,15,16}
     def __init__(self,project):
         super().__init__();self.project=project;self.current_key=None;self._changing=False;self._clipboard=[];self._link_table=None;self._link_row=-1;self._link_col=-1;self._link_window=None;self._link_timer=None;self._enter_was_down=False;self._escape_was_down=False;self.diagram_dialog=None;self._refresh_timer=QTimer(self);self._refresh_timer.setSingleShot(True);self._refresh_timer.setInterval(450);self._refresh_timer.timeout.connect(self.refresh_links)
         outer=QVBoxLayout(self);outer.setContentsMargins(0,0,0,0);outer.setSpacing(0)
@@ -668,29 +670,30 @@ class InputPage(QWidget):
         self.change_notice=QLabel();self.change_notice.setObjectName("changeNotice");self.change_notice.hide();root.addWidget(self.change_notice)
         self.compare_bar=QLabel();self.compare_bar.setObjectName("compareBar");self.compare_bar.hide();root.addWidget(self.compare_bar)
         self.road_tabs=QTabWidget();self.road_tabs.setObjectName("connectedTabs");self.road_tabs.tabBar().setObjectName("contentTabBar");self.external=self._make_table();self.internal=self._make_table();external_page=make_card("외부도로",self.external);external_page.setObjectName("tabContentCard");internal_page=make_card("내부도로",self.internal);internal_page.setObjectName("tabContentCard");self.road_tabs.addTab(external_page,"외부도로");self.road_tabs.addTab(internal_page,"내부도로");root.addWidget(self.road_tabs,1)
-        buttons=QHBoxLayout();self.add=QPushButton("양방향 구간 추가");self.copy=QPushButton("선택 구간 복사");self.paste=QPushButton("구간 붙여넣기");self.delete=QPushButton("선택 행 삭제");self.reset=QPushButton("선택 행 초기화");self.diagram_button=QPushButton("구간 연결 삽도 (F6)");self.optional=QPushButton("보조 입력 펼치기 (F7)")
-        for b in (self.add,self.copy,self.paste,self.delete,self.reset,self.diagram_button,self.optional):buttons.addWidget(b)
+        buttons=QHBoxLayout();self.add=QPushButton("양방향 구간 추가");self.copy=QPushButton("선택 구간 복사");self.paste=QPushButton("구간 붙여넣기");self.delete=QPushButton("선택 행 삭제");self.reset=QPushButton("선택 행 초기화");self.diagram_button=QPushButton("구간 연결 삽도 (F6)");self.optional=QPushButton("보조 입력 펼치기 (F7)");self.import_intersection_los=QPushButton("교차로 LOS 불러오기");self.import_intersection_los.setObjectName("excelButton");self.import_intersection_los.setIcon(excel_action_icon("excel"));self.import_intersection_los.setIconSize(QSize(16,16))
+        for b in (self.add,self.copy,self.paste,self.delete,self.reset,self.diagram_button,self.optional,self.import_intersection_los):buttons.addWidget(b)
         buttons.addStretch();self.next_button=QPushButton("분석 결과 보기");self.next_button.setObjectName("primaryButton");buttons.addWidget(self.next_button);root.addLayout(buttons)
         shortcuts=QLabel("Enter/Tab 다음 셀  ·  방향키 이동  ·  = Excel 셀 연결  ·  Ctrl+H 연결 경로 일괄 변경  ·  Ctrl+C/V 복사·붙여넣기  ·  F5 새로고침  ·  F6 연결 삽도  ·  F7 보조열  ·  F8 비교  ·  F1 단축키")
         shortcuts.setObjectName("shortcutBar");root.addWidget(shortcuts)
         self.analysis_tabs.currentChanged.connect(self._tab_changed);self.analysis_tabs.activeLabelClicked.connect(self._edit_year);self.analysis_tabs.closeRequested.connect(lambda index:self.delete_tab(tuple(self.analysis_tabs.tabData(index))));self.choose_source.clicked.connect(self.choose_excel);self.open_source.clicked.connect(self.open_excel);self.apply_source.clicked.connect(self.apply_source_to_matching_tabs);self.refresh_source.clicked.connect(self.refresh_links);self.sheet.currentTextChanged.connect(self.sheet_changed);self.sheet.activated.connect(self.sheet_confirmed);self.formula.returnPressed.connect(self.apply_formula_bar);self.tab_memo.editingFinished.connect(self.save_tab_memo)
-        self.add.clicked.connect(self.add_pair);self.copy.clicked.connect(self.copy_selected);self.paste.clicked.connect(self.paste_selected);self.delete.clicked.connect(self.delete_selected);self.reset.clicked.connect(self.reset_selected);self.diagram_button.clicked.connect(self.show_network_diagram);self.optional.clicked.connect(self.toggle_optional)
+        self.add.clicked.connect(self.add_pair);self.copy.clicked.connect(self.copy_selected);self.paste.clicked.connect(self.paste_selected);self.delete.clicked.connect(self.delete_selected);self.reset.clicked.connect(self.reset_selected);self.diagram_button.clicked.connect(self.show_network_diagram);self.optional.clicked.connect(self.toggle_optional);self.import_intersection_los.clicked.connect(self.load_intersection_los)
         self._diagram_shortcut=QShortcut(QKeySequence("F6"),self);self._diagram_shortcut.setContext(Qt.WidgetWithChildrenShortcut);self._diagram_shortcut.activated.connect(self.show_network_diagram);self.changed.connect(self.refresh_network_diagram);self.refresh_tabs()
     def _make_table(self):
         t=FastInputTable(0,len(self.HEADERS));header=OptionalColorHeader(t);t.setHorizontalHeader(header);header.sectionResized.connect(t._sync_width);t.setHorizontalHeaderLabels(self.HEADERS);t.verticalHeader().hide();t.verticalHeader().setDefaultSectionSize(34);t.frozen.verticalHeader().setDefaultSectionSize(34);t.setAlternatingRowColors(True);t.setSelectionMode(QAbstractItemView.ExtendedSelection);t.setSelectionBehavior(QAbstractItemView.SelectItems);t.setEditTriggers(QAbstractItemView.AllEditTriggers);t.setIconSize(QSize(13,13));t.frozen.setIconSize(QSize(13,13));t.horizontalHeader().setFixedHeight(84);t.frozen.horizontalHeader().setFixedHeight(84)
         header_font=t.horizontalHeader().font();header_font.setPointSizeF(7.8);t.horizontalHeader().setFont(header_font);t.frozen.horizontalHeader().setFont(header_font)
-        widths=[44,82,40,118,30,40,118]+[70]*14
+        widths=[44,82,40,118,30,40,118]+[70]*15
         for c,w in enumerate(widths):t.setColumnWidth(c,w)
         t.set_shared_delegate(0,CenterCheckDelegate(t))
         for c,values,editable in ((1,self.road_names,True),(3,self.intersection_names,True),(4,["→","←"],False),(6,self.intersection_names,True)):
             t.setItemDelegateForColumn(c,FastComboDelegate(values,editable,t,t));t.frozen.setItemDelegateForColumn(c,FastComboDelegate(values,editable,t,t.frozen))
         for c in (7,10,12,17,18):t.setItemDelegateForColumn(c,BlankNumericDelegate(True,0,10000000,table=t,parent=t))
+        t.setItemDelegateForColumn(21,BlankNumericDelegate(True,0,300,table=t,parent=t))
         t.setItemDelegateForColumn(8,BlankNumericDelegate(True,0,10,table=t,parent=t))
         t.setItemDelegateForColumn(11,GreenTimeDelegate(True,0,10000,table=t,parent=t))
         t.setItemDelegateForColumn(13,BlankNumericDelegate(False,0,1,2,table=t,parent=t))
         for c in (19,20):t.setItemDelegateForColumn(c,FastComboDelegate(["","A","B","C","D","E","F","FF","FFF"],True,t,t))
         for c,(header_color,_) in OPTIONAL_COLUMN_COLORS.items():t.horizontalHeaderItem(c).setBackground(QColor(header_color));t.horizontalHeaderItem(c).setForeground(QColor("#414B67"))
-        for c in (17,18,19,20):t.setColumnHidden(c,True)
+        for c in (17,18,19,20,21):t.setColumnHidden(c,True)
         t._replace_link_shortcut=QShortcut(QKeySequence("Ctrl+H"),t);t._replace_link_shortcut.setContext(Qt.WidgetWithChildrenShortcut);t._replace_link_shortcut.activated.connect(lambda table=t:self.replace_excel_sources(table))
         t.itemChanged.connect(lambda item,table=t:self.item_changed(table,item));t.currentCellChanged.connect(lambda r,c,pr,pc,table=t:(self.commit_row(table,pr,pc) if pr>=0 else None,self.cell_selected(table,r,c)));t.cellPressed.connect(lambda r,c,table=t:self.open_combo_on_click(table,table,r,c));t.frozen.pressed.connect(lambda index,table=t:self.open_combo_on_click(table,table.frozen,index.row(),index.column()));t.linkRequested.connect(lambda row,table=t:self.start_link(table,row));t.formulasPasted.connect(lambda entries,table=t:self.apply_pasted_formulas(table,entries));t.refreshRequested.connect(self.refresh_links);t.compareRequested.connect(self.toggle_compare);t.toggleOptionalRequested.connect(self.toggle_optional);t.addRequested.connect(self.add_pair);t.deleteRequested.connect(self.delete_selected);t.commitRequested.connect(lambda row,col,back,table=t:self.commit_row(table,row,col,back))
         return t
@@ -775,7 +778,7 @@ class InputPage(QWidget):
         except Exception:r=None
         condition=s.road_condition_override if s.road_condition_override in ("양호","보통") else road_condition(s.functional_class,s.lanes)
         type_number=(s.arterial_type_override if s.arterial_type_override not in ("","자동") else arterial_type(s.functional_class,condition)).replace("유형 ","유형")
-        values=["",s.road_name,s.start_number,s.start_name,s.direction,s.end_number,s.end_name,text("length_km",round(s.length_km*1000),"{:,}"),text("lanes",s.lanes,"{:,}"),type_number,text("cycle_s",round(s.cycle_s),"{:,}"),text("green_s",round(s.green_s),"{:,}"),text("main_volume",round(s.main_volume),"{:,}"),text("phf",s.phf,"{:.2f}"),f"{r.speed_kmh:.1f}" if r else "",r.los if r else "","",("" if s.report_length_km is None else f"{round(s.report_length_km*1000):,}"),("" if s.report_volume is None else f"{round(s.report_volume):,}"),s.intersection_los,s.approach_los]
+        values=["",s.road_name,s.start_number,s.start_name,s.direction,s.end_number,s.end_name,text("length_km",round(s.length_km*1000),"{:,}"),text("lanes",s.lanes,"{:,}"),type_number,text("cycle_s",round(s.cycle_s),"{:,}"),text("green_s",round(s.green_s),"{:,}"),text("main_volume",round(s.main_volume),"{:,}"),text("phf",s.phf,"{:.2f}"),f"{r.speed_kmh:.1f}" if r else "",r.los if r else "","",("" if s.report_length_km is None else f"{round(s.report_length_km*1000):,}"),("" if s.report_volume is None else f"{round(s.report_volume):,}"),s.intersection_los,s.approach_los,("" if s.speed_limit_kmh is None else f"{round(s.speed_limit_kmh):,}")]
         row=t.rowCount();t.insertRow(row)
         for c,value in enumerate(values):
             item=QTableWidgetItem(str(value));item.setData(Qt.UserRole,s.uid if c==0 else None);item.setData(Qt.UserRole+1,s.comparison_id if c==0 else None);item.setTextAlignment((Qt.AlignRight if c in self.NUMERIC and c!=8 else Qt.AlignCenter)|Qt.AlignVCenter)
@@ -810,7 +813,7 @@ class InputPage(QWidget):
         for field,c in (("length_km",7),("lanes",8),("cycle_s",10),("green_s",11),("main_volume",12),("phf",13)):
             if not val(c):blank.append(field)
         volume_linked=bool(t.item(row,12).data(Qt.UserRole+5)) if t.item(row,12) else False;phf_linked=bool(t.item(row,13).data(Qt.UserRole+5)) if t.item(row,13) else False
-        return SegmentInput(uid=uid,comparison_id=previous.comparison_id if previous else t.item(row,0).data(Qt.UserRole+1) or f"auto-{uuid4().hex[:8]}",scenario=self.current_key[0],year=self.current_key[1],road_category=category,road_name=val(1),start_number=val(2),start_name=val(3),direction=val(4) if val(4) in ("→","←") else "→",end_number=val(5),end_name=val(6),length_km=num(7)/1000,report_length_km=(num(17)/1000 if val(17) else None),lanes=min(10,int(num(8))),functional_class=previous.functional_class if previous else "저규격",road_condition_override=previous.road_condition_override if previous else "보통",arterial_type_override=previous.arterial_type_override if previous else "자동",cycle_s=num(10),green_s=min(num(11),num(10)),main_volume=int(round(num(12))),report_volume=(int(round(num(18))) if val(18) else None),phf=max(0,min(1,num(13))),bus_stops=previous.bus_stops if previous else 0,access_points=previous.access_points if previous else 0,intersection_los=val(19),approach_los=val(20),manual_speed_kmh=previous.manual_speed_kmh if previous else None,speed_adjustment_history=list(previous.speed_adjustment_history) if previous else [],saturation_adjustment=previous.saturation_adjustment if previous else None,initial_queue=previous.initial_queue if previous else None,pf_override=previous.pf_override if previous else None,fcw_override=previous.fcw_override if previous else None,analysis_period_h=previous.analysis_period_h if previous else None,base_saturation_flow=previous.base_saturation_flow if previous else None,coordinated=previous.coordinated if previous else None,crossing_signals=previous.crossing_signals if previous else None,blank_fields=blank,volume_source_cell=previous.volume_source_cell if previous and volume_linked else "",volume_source_path=previous.volume_source_path if previous and volume_linked else "",volume_source_sheet=previous.volume_source_sheet if previous and volume_linked else "",volume_link_status=previous.volume_link_status if previous and volume_linked else "",volume_last_value=previous.volume_last_value if previous and volume_linked else None,volume_link_error=previous.volume_link_error if previous and volume_linked else "",phf_source_cell=previous.phf_source_cell if previous and phf_linked else "",phf_source_path=previous.phf_source_path if previous and phf_linked else "",phf_source_sheet=previous.phf_source_sheet if previous and phf_linked else "",phf_link_status=previous.phf_link_status if previous and phf_linked else "",phf_last_value=previous.phf_last_value if previous and phf_linked else None,phf_link_error=previous.phf_link_error if previous and phf_linked else "")
+        return SegmentInput(uid=uid,comparison_id=previous.comparison_id if previous else t.item(row,0).data(Qt.UserRole+1) or f"auto-{uuid4().hex[:8]}",scenario=self.current_key[0],year=self.current_key[1],road_category=category,road_name=val(1),start_number=val(2),start_name=val(3),direction=val(4) if val(4) in ("→","←") else "→",end_number=val(5),end_name=val(6),length_km=num(7)/1000,report_length_km=(num(17)/1000 if val(17) else None),lanes=min(10,int(num(8))),functional_class=previous.functional_class if previous else "저규격",road_condition_override=previous.road_condition_override if previous else "보통",arterial_type_override=previous.arterial_type_override if previous else "자동",cycle_s=num(10),green_s=min(num(11),num(10)),main_volume=int(round(num(12))),report_volume=(int(round(num(18))) if val(18) else None),phf=max(0,min(1,num(13))),bus_stops=previous.bus_stops if previous else 0,access_points=previous.access_points if previous else 0,intersection_los=val(19),approach_los=val(20),speed_limit_kmh=(num(21) if val(21) else None),manual_speed_kmh=previous.manual_speed_kmh if previous else None,speed_adjustment_history=list(previous.speed_adjustment_history) if previous else [],saturation_adjustment=previous.saturation_adjustment if previous else None,initial_queue=previous.initial_queue if previous else None,pf_override=previous.pf_override if previous else None,fcw_override=previous.fcw_override if previous else None,analysis_period_h=previous.analysis_period_h if previous else None,base_saturation_flow=previous.base_saturation_flow if previous else None,coordinated=previous.coordinated if previous else None,crossing_signals=previous.crossing_signals if previous else None,blank_fields=blank,volume_source_cell=previous.volume_source_cell if previous and volume_linked else "",volume_source_path=previous.volume_source_path if previous and volume_linked else "",volume_source_sheet=previous.volume_source_sheet if previous and volume_linked else "",volume_link_status=previous.volume_link_status if previous and volume_linked else "",volume_last_value=previous.volume_last_value if previous and volume_linked else None,volume_link_error=previous.volume_link_error if previous and volume_linked else "",phf_source_cell=previous.phf_source_cell if previous and phf_linked else "",phf_source_path=previous.phf_source_path if previous and phf_linked else "",phf_source_sheet=previous.phf_source_sheet if previous and phf_linked else "",phf_link_status=previous.phf_link_status if previous and phf_linked else "",phf_last_value=previous.phf_last_value if previous and phf_linked else None,phf_link_error=previous.phf_link_error if previous and phf_linked else "")
     def save_current(self):
         if not self.current_key:return
         old={s.uid:s for s in self.project.rows(*self.current_key)};rows=[]
@@ -823,7 +826,7 @@ class InputPage(QWidget):
         self.normalize_numeric(t,row)
         self.save_current();s=next((x for x in self.project.segments if x.uid==uid),None)
         self.propagate_dictionary(s,col);self.sync_arrival_values(s,col);self.refresh_live(t,row)
-        fields={1:("road_name","가로명"),2:("start_number","교차로 번호"),3:("start_name","교차로명"),4:("direction","방향"),5:("end_number","교차로 번호"),6:("end_name","교차로명"),7:("length_km","구간길이"),8:("lanes","차로수"),10:("cycle_s","주기"),11:("green_s","녹색시간"),12:("main_volume","교통량"),13:("phf","PHF"),17:("report_length_km","보고서 구간길이"),18:("report_volume","보고서 교통량"),19:("intersection_los","교차로 서비스수준"),20:("approach_los","접근로 서비스수준")}
+        fields={1:("road_name","가로명"),2:("start_number","교차로 번호"),3:("start_name","교차로명"),4:("direction","방향"),5:("end_number","교차로 번호"),6:("end_name","교차로명"),7:("length_km","구간길이"),8:("lanes","차로수"),10:("cycle_s","주기"),11:("green_s","녹색시간"),12:("main_volume","교통량"),13:("phf","PHF"),17:("report_length_km","보고서 구간길이"),18:("report_volume","보고서 교통량"),19:("intersection_los","교차로 서비스수준"),20:("approach_los","접근로 서비스수준"),21:("speed_limit_kmh","제한속도(참고)")}
         if before and s and col in fields:
             name,label=fields[col];old=before.get(name);new=getattr(s,name)
             if old!=new:self.add_change_log("change",s,label,old,new)
@@ -916,6 +919,35 @@ class InputPage(QWidget):
                     if "phf" not in s.blank_fields:table.item(row,13).setText(f"{s.phf:.2f}")
             table.blockSignals(False)
     def arrival(self,s):return (s.end_number,s.end_name) if s.direction=="→" else (s.start_number,s.start_name)
+    def load_intersection_los(self):
+        """교차로 정리 Excel의 상황·연도별 LOS를 도착교차로 기준으로 채운다."""
+        self.save_current();settings=QSettings("NYH","ArterialAnalysis");recent=str(settings.value("recentIntersectionLosPath","") or "")
+        start=recent if recent and Path(recent).exists() else str(Path(recent).parent) if recent else ""
+        path,_=QFileDialog.getOpenFileName(self,"교차로 서비스수준 정리 Excel",start,"Excel 통합문서 (*.xlsx *.xlsm)")
+        if not path:return
+        try:groups=read_intersection_los(path)
+        except Exception as exc:QMessageBox.warning(self,"교차로 LOS 불러오기 실패",str(exc));return
+        group_by_key={(group.scenario,group.year):group for group in groups};assignments=[];missing=[];matched_by_key={}
+        for key in self.project.tab_keys():
+            group=group_by_key.get(key)
+            if group is None:continue
+            for segment in self.project.rows(*key):
+                number,name=self.arrival(segment);record=match_intersection_los(group.records,number,name)
+                if record is None:missing.append(f"{self.tab_label(key)} · {name or number or '교차로 미입력'}")
+                else:assignments.append((segment,record,group));matched_by_key[key]=matched_by_key.get(key,0)+1
+        if not assignments:
+            available=", ".join(self.tab_label((group.scenario,group.year)) for group in groups)
+            QMessageBox.warning(self,"교차로 LOS 불러오기","프로젝트의 상황·연도와 일치하는 교차로 LOS를 찾지 못했습니다.\n\nExcel에서 확인된 구분: "+available);return
+        lines=[f"{self.tab_label(key)}: {matched_by_key.get(key,0)}개 연결" for key in self.project.tab_keys() if key in group_by_key]
+        if missing:lines.append(f"일치하지 않음: {len(missing)}개\n"+"\n".join(missing[:8])+("\n…" if len(missing)>8 else ""))
+        box=QMessageBox(self);box.setWindowTitle("교차로 LOS 불러오기 확인");box.setIcon(QMessageBox.Question);box.setText("도착교차로를 기준으로 다음 참고값을 입력합니다.\n\n"+"\n".join(lines));box.setStandardButtons(QMessageBox.Yes|QMessageBox.Cancel);box.button(QMessageBox.Yes).setText("불러오기");box.button(QMessageBox.Cancel).setText("취소");box.setDefaultButton(QMessageBox.Yes)
+        if box.exec()!=QMessageBox.Yes:return
+        resolved=str(Path(path).resolve())
+        for segment,record,group in assignments:segment.intersection_los=record.los
+        for key,group in group_by_key.items():
+            if key not in self.project.tab_keys():continue
+            self.project.tab_info(*key).update(intersection_los_source_path=resolved,intersection_los_source_sheet=group.sheet,intersection_los_source_header=group.header)
+        settings.setValue("recentIntersectionLosPath",resolved);self.add_change_log("change",field="교차로 LOS 참고값",old="",new=f"{len(assignments)}개");self.load_key(self.current_key);self.changed.emit();QMessageBox.information(self,"교차로 LOS 불러오기",f"교차로 서비스수준 참고값 {len(assignments)}개를 입력했습니다."+(f"\n일치하지 않은 구간은 {len(missing)}개입니다." if missing else ""))
     def sync_arrival_values(self,s,col):
         if not s:return
         arrival=self.arrival(s)
@@ -1054,7 +1086,7 @@ class InputPage(QWidget):
         t=self.active_table();rows=self.selected_rows()
         if not rows:QMessageBox.information(self,"초기화","초기화할 행을 체크해 주세요.");return
         for r in rows:
-            for c in (7,8,10,11,12,17,18,19,20):t.item(r,c).setText("")
+            for c in (7,8,10,11,12,17,18,19,20,21):t.item(r,c).setText("")
             t.item(r,13).setText("1.00")
         self.save_current();self.changed.emit()
     def edit_details(self,uid):
@@ -1065,7 +1097,7 @@ class InputPage(QWidget):
     def toggle_optional(self):
         t=self.active_table();show=t.isColumnHidden(17)
         for table in (self.external,self.internal):
-            for c in (17,18,19,20):table.setColumnHidden(c,not show)
+            for c in (17,18,19,20,21):table.setColumnHidden(c,not show)
         self.optional.setText("보조 입력 접기 (F7)" if show else "보조 입력 펼치기 (F7)")
     def toggle_compare(self):
         if self.compare_bar.isVisible():self.compare_bar.hide();return
@@ -1242,7 +1274,7 @@ class UserGuideDialog(QDialog):
         pages={
             "빠른 시작":"""<h2>기본 분석 순서</h2><ol><li>현황 탭에서 가로명과 양쪽 교차로를 입력합니다.</li><li>구간길이, 차로수, 주기, 녹색시간, 교통량과 PHF를 입력합니다.</li><li>필요하면 분석 탭을 추가하고 현황 자료를 기준으로 수정합니다.</li><li><b>분석 결과 보기</b>에서 평균통행속도와 서비스수준을 확인합니다.</li><li>세부 계산결과와 입력 경고를 검토한 뒤 프로젝트를 저장합니다.</li></ol><p>Enter·Tab으로 다음 입력 셀, Shift+Enter·Shift+Tab으로 이전 셀로 이동합니다.</p>""",
             "Excel 연결":"""<h2>Excel 셀 연결</h2><p><b>Excel 원본 선택</b>에서 현재 분석 탭의 파일과 시트를 연결합니다. 교통량 또는 PHF 셀의 Excel 아이콘이나 <b>=</b> 키를 누르면 원본이 열립니다.</p><ol><li>Excel에서 셀 또는 범위를 선택합니다.</li><li>Enter를 누르면 주소와 저장된 숫자값을 가져오고 연결용 Excel 창이 닫힙니다.</li><li>교통량은 여러 셀·범위의 합계를 사용할 수 있고 PHF는 한 셀만 연결할 수 있습니다.</li></ol><p>주소창에 H12, H12:H15, H12,H15처럼 직접 입력할 수도 있습니다. 원본 값을 바꾼 뒤 저장하고 F5를 누르면 화면의 연결값을 갱신합니다.</p><p>초록 아이콘은 정상, 회색은 수기 입력, 황색은 확인 필요, 빨강은 연결 오류를 뜻합니다.</p>""",
-            "입력과 검토":"""<h2>입력표</h2><ul><li>한 구간은 두 방향 행으로 구성되며, 공통 교차로 정보는 병합해 표시합니다.</li><li>교차로 번호와 이름은 프로젝트 안에서 서로 동기화됩니다.</li><li>도착교차로가 같으면 주기와 PHF 연결정보를 공유하지만 녹색시간은 방향별로 유지합니다.</li><li>PHF는 0.00~1.00, 편도 차로수는 최대 10이며 녹색시간은 주기를 넘을 수 없습니다.</li><li>F7 보조 입력에는 보고서용 길이·교통량과 참고 LOS를 입력합니다.</li></ul><p>구간 연결 삽도(F6)에서 노드와 가로 연결관계를 확인하고, 선을 누르면 입력표의 해당 구간이 선택됩니다.</p>""",
+            "입력과 검토":"""<h2>입력표</h2><ul><li>한 구간은 두 방향 행으로 구성되며, 공통 교차로 정보는 병합해 표시합니다.</li><li>교차로 번호와 이름은 프로젝트 안에서 서로 동기화됩니다.</li><li>도착교차로가 같으면 주기와 PHF 연결정보를 공유하지만 녹색시간은 방향별로 유지합니다.</li><li>PHF는 0.00~1.00, 편도 차로수는 최대 10이며 녹색시간은 주기를 넘을 수 없습니다.</li><li>F7 보조 입력에는 보고서용 길이·교통량, 참고 LOS와 표지판 제한속도를 입력합니다.</li><li>교차로 LOS 불러오기는 정리 Excel의 상황·연도와 도착교차로를 대조해 참고값을 일괄 입력합니다.</li></ul><p>구간 연결 삽도(F6)에서 노드와 가로 연결관계를 확인하고, 선을 누르면 입력표의 해당 구간이 선택됩니다.</p>""",
             "결과와 저장":"""<h2>결과 확인</h2><p>분석 결과에는 도로유형, 구간거리, 교통량, 평균통행속도와 LOS가 표시됩니다. 상세 계산에서는 편람 공식에 사용된 중간값을 확인할 수 있습니다.</p><ul><li>보고서 교통량이 비어 있으면 분석 교통량을 그대로 사용합니다.</li><li>Excel 연결 오류가 있으면 마지막 정상값을 유지하되 결과 화면에 경고합니다.</li><li>Ctrl+Z는 되돌리기, Ctrl+Y는 다시 실행입니다.</li><li>변경 기록은 프로젝트와 함께 저장되며 다른 이름으로 저장해도 유지됩니다.</li></ul>""",
             "문제 해결":"""<h2>자주 확인할 사항</h2><ul><li><b>Excel 값이 갱신되지 않음:</b> 원본을 저장한 뒤 F5를 누르세요.</li><li><b>연결 오류:</b> 원본 경로와 시트명, 셀 주소를 확인하거나 Ctrl+H로 선택한 연결의 경로를 일괄 변경하세요.</li><li><b>입력값이 분석되지 않음:</b> 필수 숫자칸과 양쪽 교차로가 모두 입력되었는지 확인하세요.</li><li><b>화면에서 열이 보이지 않음:</b> 아래 가로 스크롤바를 사용하거나 F7로 보조 입력을 접으세요.</li></ul><p>분석 결과는 입력자료와 적용 조건에 따라 달라지므로 최종 성과품 작성 전 세부 계산결과를 검토해야 합니다.</p>""",
         }

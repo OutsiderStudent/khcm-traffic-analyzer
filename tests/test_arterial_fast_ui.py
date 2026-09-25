@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.8.0")
+        self.assertEqual(APP_VERSION,"1.8.1")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -110,8 +110,10 @@ class FastArterialUiTest(unittest.TestCase):
 
     def test_report_overrides_are_hidden_and_optional(self):
         self.assertTrue(self.table.isColumnHidden(17))
+        self.assertTrue(self.table.isColumnHidden(21))
         self.page.toggle_optional()
         self.assertFalse(self.table.isColumnHidden(17))
+        self.assertFalse(self.table.isColumnHidden(21))
 
     def test_complete_rows_only_reach_results(self):
         self.fill_row(0)
@@ -267,7 +269,7 @@ class FastArterialUiTest(unittest.TestCase):
 
     def test_non_segment_input_columns_have_equal_width(self):
         self.page.toggle_optional()
-        self.assertEqual(len({self.table.columnWidth(c) for c in range(7,21)}),1)
+        self.assertEqual(len({self.table.columnWidth(c) for c in range(7,22)}),1)
 
     def test_narrow_metric_headers_are_wrapped_without_long_lines(self):
         for header in self.page.HEADERS[7:]:
@@ -299,10 +301,15 @@ class FastArterialUiTest(unittest.TestCase):
         self.assertEqual(self.page.choose_source.objectName(),"excelPrimaryButton");self.assertEqual(self.page.open_source.objectName(),"excelButton")
         self.assertIn("#107C41",FAST_STYLE);self.assertIn("#EAF5EE",FAST_STYLE)
 
-    def test_optional_columns_use_four_subtle_visual_colors(self):
-        body_colors=[self.table.item(0,column).background().color().name() for column in (17,18,19,20)]
-        header_colors=[self.table.horizontalHeaderItem(column).background().color().name() for column in (17,18,19,20)]
-        self.assertEqual(body_colors,["#dceeff","#ddf4e7","#fff0c7","#eee2ff"]);self.assertEqual(len(set(header_colors)),4);self.assertIsInstance(self.table.horizontalHeader(),OptionalColorHeader)
+    def test_optional_columns_use_five_subtle_visual_colors(self):
+        body_colors=[self.table.item(0,column).background().color().name() for column in (17,18,19,20,21)]
+        header_colors=[self.table.horizontalHeaderItem(column).background().color().name() for column in (17,18,19,20,21)]
+        self.assertEqual(body_colors,["#dceeff","#ddf4e7","#fff0c7","#eee2ff","#fbe3e7"]);self.assertEqual(len(set(header_colors)),5);self.assertIsInstance(self.table.horizontalHeader(),OptionalColorHeader)
+
+    def test_speed_limit_reference_value_is_saved(self):
+        self.page.toggle_optional();self.table.item(0,21).setText("60");self.page.commit_row(self.table,0,21)
+        self.assertEqual(self.window.project.rows("현황",2026)[0].speed_limit_kmh,60)
+        self.assertFalse(self.page.import_intersection_los.icon().isNull())
 
     def test_workflow_has_no_gray_gap_between_steps_and_page(self):
         self.assertEqual(self.window.workflow.layout().spacing(),0)

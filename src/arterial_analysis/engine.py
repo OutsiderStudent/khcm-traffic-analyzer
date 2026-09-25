@@ -71,6 +71,7 @@ class SegmentInput:
     access_points: int = 0
     intersection_los: str = ""
     approach_los: str = ""
+    speed_limit_kmh: float | None = None
     manual_speed_kmh: float | None = None
     speed_adjustment_history: list[dict[str, Any]] = field(default_factory=list)
     saturation_adjustment: float | None = None

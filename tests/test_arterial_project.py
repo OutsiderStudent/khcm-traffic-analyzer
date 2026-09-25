@@ -31,6 +31,7 @@ class ArterialProjectTest(unittest.TestCase):
         project.segments[0].analysis_period_h = 0.5
         project.segments[0].base_saturation_flow = 2100
         project.segments[0].coordinated = True
+        project.segments[0].speed_limit_kmh = 60
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "detail.ara1"
             project.save(path)
@@ -38,6 +39,7 @@ class ArterialProjectTest(unittest.TestCase):
         self.assertEqual(loaded.segments[0].analysis_period_h, 0.5)
         self.assertEqual(loaded.segments[0].base_saturation_flow, 2100)
         self.assertTrue(loaded.segments[0].coordinated)
+        self.assertEqual(loaded.segments[0].speed_limit_kmh, 60)
 
     def test_reports_use_report_volume(self):
         project = ArterialProject(current_year=2026, future_years=[2033])
