@@ -36,7 +36,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.8.6")
+        self.assertEqual(APP_VERSION,"1.8.7")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -253,6 +253,16 @@ class FastArterialUiTest(unittest.TestCase):
         timer.stop.assert_called_once();timer.deleteLater.assert_called_once()
         self.assertIsNone(self.page._link_timer);self.assertIsNone(self.page._link_window);self.assertIsNone(self.page._link_table)
         self.assertIn("다시 연결",self.page.formula.placeholderText())
+
+    def test_excel_link_completion_restores_maximized_window(self):
+        self.window.showMaximized();APP.processEvents();self.page._link_was_maximized=True
+        self.page.restore_window_after_link();APP.processEvents()
+        self.assertTrue(self.window.isMaximized())
+
+    def test_excel_link_completion_keeps_normal_window_normal(self):
+        self.window.showNormal();APP.processEvents();self.page._link_was_maximized=False
+        self.page.restore_window_after_link();APP.processEvents()
+        self.assertFalse(self.window.isMaximized())
 
     def test_f5_reads_same_workbook_once_for_multiple_links(self):
         info=self.window.project.tab_info("현황",2026);info.update(source_path=__file__,source_sheet="Sheet1")

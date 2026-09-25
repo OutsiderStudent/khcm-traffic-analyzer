@@ -33,7 +33,7 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.8.6"
+APP_VERSION = "1.8.7"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -709,7 +709,7 @@ class InputPage(QWidget):
     HEADERS=["선택","가로명","교차로\n번호","교차로명","↔","교차로\n번호","교차로명","구간길이\n(m)","본선\n차로수\n(편도)","유형\n번호","주기\n(초)","녹색시간\n(초)","교통량\n(대/시)","PHF","평균\n통행속도\n(km/h)","서비스수준\n(LOS)","상세","보고서\n구간길이\n(m)","보고서\n교통량\n(대/시)","교차로\n서비스수준\n(참고)","접근로\n서비스수준\n(참고)","제한속도\n(km/h)\n(참고)"]
     INTEGER={7,8,10,11,12,17,18,21}; NUMERIC={7,8,10,11,12,13,14,17,18,21}; READONLY={0,9,14,15,16}
     def __init__(self,project):
-        super().__init__();self.project=project;self.current_key=None;self._changing=False;self._clipboard=[];self._link_table=None;self._link_row=-1;self._link_col=-1;self._link_window=None;self._link_timer=None;self._enter_was_down=False;self._escape_was_down=False;self.diagram_dialog=None;self._refresh_timer=QTimer(self);self._refresh_timer.setSingleShot(True);self._refresh_timer.setInterval(450);self._refresh_timer.timeout.connect(self.refresh_links)
+        super().__init__();self.project=project;self.current_key=None;self._changing=False;self._clipboard=[];self._link_table=None;self._link_row=-1;self._link_col=-1;self._link_window=None;self._link_timer=None;self._link_was_maximized=False;self._enter_was_down=False;self._escape_was_down=False;self.diagram_dialog=None;self._refresh_timer=QTimer(self);self._refresh_timer.setSingleShot(True);self._refresh_timer.setInterval(450);self._refresh_timer.timeout.connect(self.refresh_links)
         outer=QVBoxLayout(self);outer.setContentsMargins(0,0,0,0);outer.setSpacing(0)
         title_band=QFrame();title_band.setObjectName("inputTitleBand");title_layout=QVBoxLayout(title_band);title_layout.setContentsMargins(12,5,12,4);title=QLabel("상황·연도별 분석구간 입력");title.setObjectName("pageTitle");title_layout.addWidget(title);outer.addWidget(title_band)
         content=QFrame();content.setObjectName("inputContent");root=QVBoxLayout(content);root.setContentsMargins(10,4,10,5);root.setSpacing(0);outer.addWidget(content,1)
@@ -1247,6 +1247,7 @@ class InputPage(QWidget):
         if col not in (12,13):col=12
         self.formula.clear();self.formula.setPlaceholderText("연결 대기: Excel에서 셀을 선택하고 Enter를 누르세요. Esc는 취소입니다.")
         self.save_current();uid=t.item(row,0).data(Qt.UserRole);segment=next((s for s in self.project.segments if s.uid==uid),None);prefix="volume" if col==12 else "phf";address=getattr(segment,f"{prefix}_source_cell","") if segment else ""
+        self._link_was_maximized=self.window().isMaximized()
         try:self._link_window=open_link_window(info["source_path"],info.get("source_sheet",""),address,self.excel_screen_geometry())
         except Exception as exc:QMessageBox.critical(self,"Excel 연결 실패",str(exc));return
         self._link_table=t;self._link_row=row;self._link_col=col;self._enter_was_down=False;self._escape_was_down=False;self._link_timer=QTimer(self);self._link_timer.timeout.connect(self.poll_link);self._link_timer.start(60)
@@ -1256,7 +1257,9 @@ class InputPage(QWidget):
         current=self.window().screen();target=next((screen for screen in screens if screen is not current),screens[0]);g=target.availableGeometry();return g.x(),g.y(),g.width(),g.height()
     def cancel_link(self,message="Excel 셀 연결을 취소했습니다."):
         if self._link_timer is not None:self._link_timer.stop();self._link_timer.deleteLater();self._link_timer=None
-        close_link_window(self._link_window);self._link_window=None;self._link_table=None;self._link_row=-1;self._link_col=-1;self._enter_was_down=False;self._escape_was_down=False;self.formula.clear();self.formula.setPlaceholderText(message);self.window().showNormal();self.window().raise_();self.window().activateWindow()
+        close_link_window(self._link_window);self._link_window=None;self._link_table=None;self._link_row=-1;self._link_col=-1;self._enter_was_down=False;self._escape_was_down=False;self.formula.clear();self.formula.setPlaceholderText(message);self.restore_window_after_link()
+    def restore_window_after_link(self):
+        window=self.window();window.showMaximized() if self._link_was_maximized else window.showNormal();window.raise_();window.activateWindow();self._link_was_maximized=False
     def poll_link(self):
         hwnd=int((self._link_window or {}).get("hwnd",0) or 0)
         if not hwnd or not ctypes.windll.user32.IsWindow(hwnd):
@@ -1278,7 +1281,7 @@ class InputPage(QWidget):
         self.save_current();uid=self._link_table.item(self._link_row,0).data(Qt.UserRole);s=next(x for x in self.project.segments if x.uid==uid);prefix=kind;field="main_volume" if kind=="volume" else "phf";old=getattr(s,field);setattr(s,field,value);setattr(s,f"{prefix}_source_cell",address);setattr(s,f"{prefix}_source_path","");setattr(s,f"{prefix}_source_sheet","");setattr(s,f"{prefix}_last_value",value);setattr(s,f"{prefix}_link_status","ok");setattr(s,f"{prefix}_link_error","");s.blank_fields=[x for x in s.blank_fields if x!=field]
         if kind=="phf":self.sync_arrival_values(s,13)
         self.add_change_log("change",s,"교통량" if kind=="volume" else "PHF",old,value);self._link_timer.stop();self._link_timer.deleteLater();self._link_timer=None;close_link_window(self._link_window);self._link_window=None
-        table=self._link_table;row=self._link_row;col=self._link_col;self._link_table=None;self._link_row=-1;self._link_col=-1;self.load_key(self.current_key);table.setCurrentCell(min(row+1,table.rowCount()-1),col);window=self.window();window.showNormal();window.raise_();window.activateWindow();self.changed.emit()
+        table=self._link_table;row=self._link_row;col=self._link_col;self._link_table=None;self._link_row=-1;self._link_col=-1;self.load_key(self.current_key);table.setCurrentCell(min(row+1,table.rowCount()-1),col);self.restore_window_after_link();self.changed.emit()
     def refresh_links(self):
         if not self.current_key:return
         self.save_current();info=self.project.tab_info(*self.current_key);path=info.get("source_path","");sheet=info.get("source_sheet","")
@@ -1562,4 +1565,4 @@ def enable_native_file_dialogs():
 
 
 def main():
-    enable_native_file_dialogs();app=QApplication(sys.argv);app.setStyle(TactileProxyStyle("Fusion"));apply_light_palette(app);load_font();app.setApplicationName(APP_NAME);app.setApplicationVersion(APP_VERSION);app.setStyleSheet(FAST_STYLE);register_project_file_association();w=MainWindow();startup_project=project_argument(sys.argv);w.open_project_path(startup_project) if startup_project else None;motion=MotionController(app);app.motion_controller=motion;motion.bind(w);w.show();return app.exec()
+    enable_native_file_dialogs();app=QApplication(sys.argv);app.setStyle(TactileProxyStyle("Fusion"));apply_light_palette(app);load_font();app.setApplicationName(APP_NAME);app.setApplicationVersion(APP_VERSION);app.setStyleSheet(FAST_STYLE);register_project_file_association();w=MainWindow();startup_project=project_argument(sys.argv);w.open_project_path(startup_project) if startup_project else None;motion=MotionController(app);app.motion_controller=motion;motion.bind(w);w.showMaximized();return app.exec()
