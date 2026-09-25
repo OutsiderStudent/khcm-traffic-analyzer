@@ -5,7 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QItemSelectionModel, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QLineEdit, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
 
@@ -35,7 +35,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.8.1")
+        self.assertEqual(APP_VERSION,"1.8.2")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -247,6 +247,13 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.load_key(("현황",2026))
         self.assertFalse(self.table.item(0,12).icon().isNull())
         self.assertTrue(str(self.table.item(0,12).data(Qt.UserRole+5)).startswith("="))
+
+    def test_clicking_linked_excel_button_preserves_existing_link(self):
+        segment=self.window.project.rows("현황",2026)[0];segment.volume_source_cell="B12";segment.volume_link_status="ok";segment.main_volume=1700;segment.blank_fields=[field for field in segment.blank_fields if field!="main_volume"]
+        info=self.window.project.tab_info("현황",2026);info.update(source_path=str(Path(__file__).resolve()),source_sheet="현황2026");self.page.load_key(("현황",2026))
+        self.table.linkRequested.disconnect();spy=QSignalSpy(self.table.linkRequested);self.window.show();self.table.scrollToItem(self.table.item(0,12));APP.processEvents();rect=self.table.visualRect(self.table.model().index(0,12))
+        QTest.mouseClick(self.table.viewport(),Qt.LeftButton,pos=rect.topLeft()+QPoint(10,rect.height()//2));QTest.qWait(150)
+        segment=self.window.project.rows("현황",2026)[0];self.assertEqual(spy.count(),1);self.assertEqual(segment.volume_source_cell,"B12");self.assertEqual(segment.main_volume,1700);self.assertTrue(str(self.table.item(0,12).data(Qt.UserRole+5)).startswith("="))
 
     def test_copy_keeps_excel_formula_and_paste_requests_link(self):
         item=self.table.item(0,12);self.table.setCurrentCell(0,12);self.table.blockSignals(True);item.setData(Qt.UserRole+5,"='C:\\[traffic.xlsx]현황2026'!$B$12");self.table.blockSignals(False);self.table.selectionModel().select(self.table.model().index(0,12),QItemSelectionModel.Select);self.table._copy()

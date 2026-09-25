@@ -33,7 +33,7 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.8.1"
+APP_VERSION = "1.8.2"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -468,13 +468,18 @@ class FastInputTable(FrozenInputTable):
     addRequested=Signal(); deleteRequested=Signal(); tabNextRequested=Signal(int); commitRequested=Signal(int,int,bool); formulasPasted=Signal(object)
     def __init__(self,rows,columns,parent=None):
         super().__init__(rows,columns,7,parent); self.frozen.installEventFilter(self);self.viewport().installEventFilter(self)
+    def _set_icon_without_edit(self,item,icon):
+        """버튼 눌림 표현이 셀 편집으로 오인되어 Excel 연결을 끊지 않게 한다."""
+        previous=self.blockSignals(True)
+        try:item.setIcon(icon)
+        finally:self.blockSignals(previous)
     def eventFilter(self,obj,event):
         if obj is self.viewport() and event.type()==QEvent.MouseButtonPress:
             index=self.indexAt(event.position().toPoint())
             if index.isValid() and index.column() in (12,13):
                 rect=self.visualRect(index)
                 if event.position().x()<=rect.left()+22:
-                    self.setCurrentCell(index.row(),index.column());item=self.item(index.row(),index.column());status=str(item.data(Qt.UserRole+6) or "manual");item.setIcon(excel_link_icon(status,True));QTimer.singleShot(110,lambda target=item,state=status:target.setIcon(excel_link_icon(state)));QTimer.singleShot(120,lambda row=index.row():self.linkRequested.emit(row));event.accept();return True
+                    self.setCurrentCell(index.row(),index.column());item=self.item(index.row(),index.column());status=str(item.data(Qt.UserRole+6) or "manual");self._set_icon_without_edit(item,excel_link_icon(status,True));QTimer.singleShot(110,lambda target=item,state=status:self._set_icon_without_edit(target,excel_link_icon(state)));QTimer.singleShot(120,lambda row=index.row():self.linkRequested.emit(row));event.accept();return True
         if obj is self.frozen and event.type()==QEvent.KeyPress:
             self.setCurrentCell(self.frozen.currentIndex().row(),self.frozen.currentIndex().column())
             self.keyPressEvent(event); return event.isAccepted()
