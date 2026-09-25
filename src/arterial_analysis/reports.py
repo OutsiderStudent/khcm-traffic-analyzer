@@ -208,7 +208,7 @@ def comparison_report(
             change = [
                 _delta_text(volume_delta),
                 _delta_text(speed_delta, 1),
-                "-" if a.los == b.los else f"{a.los}→{b.los}",
+                f"{a.los}→{b.los}",
             ]
             detail = f"교통량 증감률 {volume_pct} · V/c {a.vc_ratio:.2f}→{b.vc_ratio:.2f} · 지체 변화 {b.control_delay_s-a.control_delay_s:+.1f}초 · 차로수 {a.segment.lanes}→{b.segment.lanes} · g/C {a.segment.green_s/a.segment.cycle_s:.2f}→{b.segment.green_s/b.segment.cycle_s:.2f}"
             improved = b.speed_kmh > a.speed_kmh + 0.05 or ({"A":0,"B":1,"C":2,"D":3,"E":4,"F":5,"FF":6,"FFF":7}.get(b.los,9) < {"A":0,"B":1,"C":2,"D":3,"E":4,"F":5,"FF":6,"FFF":7}.get(a.los,9))

@@ -85,7 +85,7 @@ def load_font() -> None:
 
 def make_card(title: str, child: QWidget) -> QFrame:
     frame = QFrame(); frame.setObjectName("card")
-    layout = QVBoxLayout(frame); layout.setContentsMargins(16, 11, 16, 13); layout.setSpacing(6)
+    layout = QVBoxLayout(frame); layout.setContentsMargins(10, 6, 10, 7); layout.setSpacing(3)
     heading = QLabel(title); heading.setObjectName("cardTitle")
     layout.addWidget(heading); layout.addWidget(child)
     return frame
@@ -230,6 +230,7 @@ class CopyableTable(QTableWidget):
         self.setSelectionBehavior(QAbstractItemView.SelectItems)
         self.setAlternatingRowColors(True)
         self.verticalHeader().setVisible(False)
+        self.verticalHeader().setDefaultSectionSize(25)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
 
@@ -811,11 +812,11 @@ def populate_spec(table: CopyableTable, spec: ReportSpec) -> None:
         category=spec.row_categories[data_index] if data_index<len(spec.row_categories) else ""
         category_group=("내부도로" if category==INTERNAL else "외부도로") if category else ""
         if category_group and category_group!=last_category:
-            vr=table.rowCount(); table.insertRow(vr); table.setSpan(vr,0,1,columns); section=QTableWidgetItem("■ "+category_group); section.setTextAlignment(Qt.AlignLeft|Qt.AlignVCenter); section.setBackground(QColor("#DCE7F5")); section.setForeground(QColor("#1E3A5F")); table.setItem(vr,0,section); last_category=category_group
+            vr=table.rowCount(); table.insertRow(vr); table.setRowHeight(vr,24); table.setSpan(vr,0,1,columns); section=QTableWidgetItem("■ "+category_group); section.setTextAlignment(Qt.AlignLeft|Qt.AlignVCenter); section.setBackground(QColor("#DCE7F5")); section.setForeground(QColor("#1E3A5F")); table.setItem(vr,0,section); last_category=category_group
         pair_id=spec.row_pair_ids[data_index] if data_index<len(spec.row_pair_ids) else f"row-{data_index}"
         if pair_id!=last_pair:pair_band+=1;last_pair=pair_id
         row_background=QColor("#FFFFFF" if pair_band%2==0 else "#F8FAFD")
-        row_index=table.rowCount(); table.insertRow(row_index); visual_rows.append((data_index,row_index))
+        row_index=table.rowCount(); table.insertRow(row_index); table.setRowHeight(row_index,25); visual_rows.append((data_index,row_index))
         for col, value in enumerate(row):
             text = str(value)
             numeric = bool(re.fullmatch(r"[+-]?[\d,]+(?:\.\d+)?%?", text))
@@ -829,7 +830,7 @@ def populate_spec(table: CopyableTable, spec: ReportSpec) -> None:
         if spec.row_details and data_index<len(spec.row_details):
             detail_row=table.rowCount(); table.insertRow(detail_row); table.setSpan(detail_row,0,1,columns); detail_text=(spec.row_warnings[data_index]+" · " if data_index<len(spec.row_warnings) and spec.row_warnings[data_index] else "")+spec.row_details[data_index]; detail_item=QTableWidgetItem(""); detail_item.setData(Qt.UserRole,detail_text); detail_item.setBackground(QColor("#F7FAFC")); detail_item.setForeground(QColor("#475569")); table.setItem(detail_row,0,detail_item); table.setRowHidden(detail_row,True)
             collapsed_text="검토 ▼" if not (data_index<len(spec.row_warnings) and spec.row_warnings[data_index]) else "확인 필요 ▼"
-            button=QPushButton(collapsed_text); button.setObjectName("reviewButton"); button.setProperty("collapsedText",collapsed_text); button.setMinimumHeight(max(28,button.fontMetrics().height()+10)); button.clicked.connect(lambda _=False,r=detail_row,b=button:self_toggle_detail(table,r,b)); table.setCellWidget(row_index,columns-1,button); table.setRowHeight(row_index,max(38,button.minimumHeight()+10))
+            button=QPushButton(collapsed_text); button.setObjectName("reviewButton"); button.setProperty("collapsedText",collapsed_text); button.setMinimumHeight(max(24,button.fontMetrics().height()+10)); button.setMinimumWidth(button.fontMetrics().horizontalAdvance(collapsed_text)+22); button.clicked.connect(lambda _=False,r=detail_row,b=button:self_toggle_detail(table,r,b)); table.setCellWidget(row_index,columns-1,button); table.setRowHeight(row_index,max(27,button.minimumHeight()+3))
     # 양방향 한 쌍의 공통 구간정보는 세로 병합하고 방향만 분리한다.
     if not spec.row_details:
         start=0
@@ -843,7 +844,7 @@ def populate_spec(table: CopyableTable, spec: ReportSpec) -> None:
                 for col in (spec.body_merge_columns or (0,)): table.setSpan(visual,col,end-start,1)
             start=end
     for col, width in enumerate(spec.widths): table.setColumnWidth(col, width)
-    table.setRowHeight(0, 34); table.setRowHeight(1, 46)
+    table.setRowHeight(0, 28); table.setRowHeight(1, 38)
 
 
 def self_toggle_detail(table: QTableWidget,row: int,button: QPushButton) -> None:
@@ -858,13 +859,13 @@ class ResultsPage(QWidget):
     changed = Signal()
     def __init__(self) -> None:
         super().__init__(); self.project=None; self.results=[]; self.current_spec=None; self.scope=[]
-        root = QVBoxLayout(self); root.setContentsMargins(14, 10, 14, 10); root.setSpacing(6)
+        root = QVBoxLayout(self); root.setContentsMargins(10, 5, 10, 5); root.setSpacing(3)
         hero_row=QHBoxLayout(); self.hero = QLabel(); self.hero.setObjectName("resultHero"); self.hero.setWordWrap(True); hero_row.addWidget(self.hero,1); self.copy_hero=QPushButton("문구 복사"); self.copy_hero.setObjectName("primaryButton"); hero_row.addWidget(self.copy_hero); root.addLayout(hero_row)
         self.save_notice=QLabel("분석 결과를 확인한 뒤 프로젝트를 저장해 주세요."); self.save_notice.setObjectName("saveNotice"); root.addWidget(self.save_notice)
         self.link_warning=QLabel();self.link_warning.setObjectName("linkWarning");self.link_warning.setWordWrap(True);self.link_warning.hide();root.addWidget(self.link_warning)
         sheet_group=QWidget();sheet_group_layout=QVBoxLayout(sheet_group);sheet_group_layout.setContentsMargins(0,0,0,0);sheet_group_layout.setSpacing(0)
         self.tabs = QTabBar(); self.tabs.setObjectName("sheetTabs"); self.tabs.setExpanding(False); self.tabs.setDrawBase(False); sheet_group_layout.addWidget(self.tabs)
-        sheet_panel=QFrame();sheet_panel.setObjectName("tabSheetPanel");sheet_layout=QVBoxLayout(sheet_panel);sheet_layout.setContentsMargins(10,8,10,10);sheet_layout.setSpacing(6)
+        sheet_panel=QFrame();sheet_panel.setObjectName("tabSheetPanel");sheet_layout=QVBoxLayout(sheet_panel);sheet_layout.setContentsMargins(7,4,7,5);sheet_layout.setSpacing(3)
         hint = QHBoxLayout(); copy_note = QLabel("표 범위를 선택한 뒤 Ctrl+C로 한글 표에 붙여넣을 수 있습니다. 평균통행속도 셀을 더블클릭하면 근거를 남기고 조정할 수 있습니다."); copy_note.setObjectName("copyNote"); hint.addWidget(copy_note); hint.addStretch(); sheet_layout.addLayout(hint)
         self.table = CopyableTable();result_card=make_card("2. 분석 결과", self.table);result_card.setObjectName("tabContentCard");sheet_layout.addWidget(result_card,1);sheet_group_layout.addWidget(sheet_panel,1);root.addWidget(sheet_group,1)
         nav = QHBoxLayout(); self.back = QPushButton("구간 입력으로"); self.detail = QPushButton("부록용 세부 계산"); self.detail.setObjectName("primaryButton"); nav.addWidget(self.back); nav.addStretch(); nav.addWidget(self.detail); root.addLayout(nav)

@@ -72,7 +72,8 @@ class ArterialProjectTest(unittest.TestCase):
         self.assertEqual(spec.rows[0][13],"5.0")
         self.assertEqual(spec.rows[1][12],"-")
         self.assertEqual(spec.rows[1][13],"-")
-        self.assertEqual(spec.rows[1][14],"-")
+        unchanged_before,unchanged_after=spec.rows[1][14].split("→")
+        self.assertEqual(unchanged_before,unchanged_after)
 
     def test_reports_group_external_before_internal_then_road_name(self):
         project=ArterialProject();project.add_starter_rows()

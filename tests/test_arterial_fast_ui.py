@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 from pathlib import Path
@@ -7,9 +8,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QLineEdit, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QLineEdit, QMessageBox, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
 
-from arterial_analysis.app_fast import APP_VERSION, FAST_STYLE, MainWindow, NetworkDiagramDialog, NetworkDiagramWidget, OptionalColorHeader, UserGuideDialog, build_network_graph, enable_native_file_dialogs
+from arterial_analysis.app_fast import APP_VERSION, FAST_STYLE, MainWindow, NetworkDiagramDialog, NetworkDiagramWidget, OptionalColorHeader, UserGuideDialog, build_network_graph, enable_native_file_dialogs, project_argument, project_open_command
 from arterial_analysis.engine import SegmentInput
 from arterial_analysis.motion import MotionController
 
@@ -35,7 +36,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.8.2")
+        self.assertEqual(APP_VERSION,"1.8.3")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -281,7 +282,7 @@ class FastArterialUiTest(unittest.TestCase):
     def test_narrow_metric_headers_are_wrapped_without_long_lines(self):
         for header in self.page.HEADERS[7:]:
             self.assertLessEqual(max(map(len,header.splitlines())),6)
-        self.assertGreaterEqual(self.table.horizontalHeader().height(),84)
+        self.assertGreaterEqual(self.table.horizontalHeader().height(),66)
 
     def test_analysis_tab_plus_is_centered_and_close_sits_by_label(self):
         self.window.project.ensure_tab("사업 미시행시",2033);self.page.refresh_tabs(("사업 미시행시",2033))
@@ -432,6 +433,51 @@ class FastArterialUiTest(unittest.TestCase):
         self.assertFalse(any(future.uid in edge["uids"] for edge in self.page.diagram_dialog.diagram.edges))
         self.page.load_key(("사업 시행시",2033));APP.processEvents()
         self.assertIn("연결로",{road for edge in self.page.diagram_dialog.diagram.edges for road in edge["roads"]})
+
+    def test_segment_shortcuts_and_button_labels(self):
+        self.table.item(0,0).setCheckState(Qt.Checked);self.table.setFocus();APP.processEvents()
+        QTest.keyClick(self.table,Qt.Key_C,Qt.ControlModifier);self.assertEqual(len(self.page._clipboard),2)
+        before=self.table.rowCount();QTest.keyClick(self.table,Qt.Key_V,Qt.ControlModifier);self.assertEqual(self.table.rowCount(),before+2)
+        QTest.keyClick(self.table,Qt.Key_Equal,Qt.ControlModifier);self.assertEqual(self.table.rowCount(),before+4)
+        self.table.item(0,0).setCheckState(Qt.Checked);QTest.keyClick(self.table,Qt.Key_Delete,Qt.ControlModifier);self.assertEqual(self.table.rowCount(),before+2)
+        expected=((self.page.add,"양방향 구간 추가 (Ctrl++)"),(self.page.copy,"선택 구간 복사 (Ctrl+C)"),(self.page.paste,"구간 붙여넣기 (Ctrl+V)"),(self.page.delete,"선택 구간 삭제 (Ctrl+Del)"))
+        for button,text in expected:
+            self.assertEqual(button.text(),text);self.assertGreaterEqual(button.minimumWidth(),button.sizeHint().width());self.assertGreaterEqual(button.minimumHeight(),button.sizeHint().height())
+
+    def test_result_to_detail_does_not_repeat_excel_error_dialog(self):
+        self.fill_row(0);self.page.save_current();self.window.project.segments[0].volume_link_error="연결 오류"
+        self.window.workflow.stack.setCurrentIndex(1)
+        with patch.object(QMessageBox,"exec",return_value=QMessageBox.Cancel) as dialog, patch.object(self.page,"refresh_links") as refresh:
+            self.window.workflow.go(2)
+        dialog.assert_not_called();refresh.assert_not_called();self.assertEqual(self.window.workflow.stack.currentIndex(),2)
+
+    def test_project_argument_and_open_command_support_korean_spaced_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"대구 가로 분석.ara1";self.window.project.save(path)
+            self.assertEqual(project_argument(["app.exe",str(path)]),str(path.resolve()))
+            self.assertEqual(project_open_command(Path(directory)/"프로그램 파일.exe"),f'"{(Path(directory)/"프로그램 파일.exe").resolve()}" "%1"')
+            other=MainWindow();self.assertTrue(other.open_project_path(path));self.assertEqual(Path(other.path),path.resolve());other.deleteLater()
+
+    def test_full_hd_shows_ten_bidirectional_segments_on_input_and_results(self):
+        for _ in range(9):self.page.add_pair()
+        for row in range(self.table.rowCount()):self.fill_row(row,900+row)
+        # 1920×1080 모니터의 제목 표시줄·작업 표시줄을 제외한 실제 최대화 영역을 기준으로 한다.
+        self.window.resize(1920,1000);self.window.show();APP.processEvents()
+        bottom=self.table.rowViewportPosition(19)+self.table.rowHeight(19)
+        self.assertLessEqual(bottom,self.table.viewport().height())
+        self.page.save_current();project=self.window.project
+        for scenario in ("사업 미시행시","사업 시행시"):
+            project.ensure_tab(scenario,2033);project.copy_rows("현황",2026,scenario,2033)
+            for segment in project.rows(scenario,2033):
+                segment.main_volume=900
+                segment.blank_fields=[]
+        analyzed=project.analyze_all();self.assertEqual(len(analyzed),60)
+        page=self.window.workflow.results_page;page.refresh(project,analyzed);self.window.workflow.stack.setCurrentIndex(1);APP.processEvents()
+        def assert_all_data_visible():
+            rows=[row for row in range(2,page.table.rowCount()) if not page.table.isRowHidden(row) and page.table.columnSpan(row,0)<page.table.columnCount()]
+            self.assertEqual(len(rows),20);last=rows[-1];self.assertLessEqual(page.table.rowViewportPosition(last)+page.table.rowHeight(last),page.table.viewport().height())
+        assert_all_data_visible()
+        index=next(i for i in range(page.tabs.count()) if "미시행-시행" in page.tabs.tabText(i));page.tabs.setCurrentIndex(index);page.show_tab(index);APP.processEvents();assert_all_data_visible()
 
 
 if __name__ == "__main__":
