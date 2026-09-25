@@ -10,7 +10,7 @@ from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QLineEdit, QMessageBox, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
 
-from arterial_analysis.app_fast import APP_VERSION, FAST_STYLE, MainWindow, NetworkDiagramDialog, NetworkDiagramWidget, OptionalColorHeader, UserGuideDialog, build_network_graph, enable_native_file_dialogs, project_argument, project_open_command
+from arterial_analysis.app_fast import APP_VERSION, DetailCellDelegate, FAST_STYLE, MainWindow, NetworkDiagramDialog, NetworkDiagramWidget, OptionalColorHeader, UserGuideDialog, build_network_graph, detail_is_modified, enable_native_file_dialogs, project_argument, project_open_command
 from arterial_analysis.engine import SegmentInput
 from arterial_analysis.motion import MotionController
 
@@ -36,7 +36,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.8.5")
+        self.assertEqual(APP_VERSION,"1.8.6")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -75,10 +75,21 @@ class FastArterialUiTest(unittest.TestCase):
             QTest.qWait(20)
         self.assertAlmostEqual(float(button.property("khcmPressProgress")),0.0,places=2)
 
-    def test_compact_detail_button_keeps_text_height(self):
-        button=self.table.cellWidget(0,16)
-        self.assertGreaterEqual(button.height(),button.fontMetrics().height()+3)
-        self.assertLessEqual(button.height(),self.table.rowHeight(0))
+    def test_detail_cell_badge_keeps_text_inside_the_row(self):
+        delegate=self.table.itemDelegateForColumn(16);self.assertIsInstance(delegate,DetailCellDelegate);self.assertIsNone(self.table.cellWidget(0,16));self.assertEqual(self.table.item(0,16).text(),"상세")
+        badge=delegate.badge_rect(QRect(0,0,self.table.columnWidth(16),self.table.rowHeight(0)))
+        self.assertGreaterEqual(badge.height(),self.table.fontMetrics().height());self.assertEqual(delegate.RADIUS,8)
+
+    def test_modified_detail_uses_dark_navy_badge(self):
+        segment=self.window.project.rows("현황",2026)[0];self.assertFalse(detail_is_modified(segment));self.assertFalse(bool(self.table.item(0,16).data(Qt.UserRole+7)))
+        segment.bus_stops=1;self.page.load_key(("현황",2026));delegate=self.table.itemDelegateForColumn(16)
+        self.assertTrue(detail_is_modified(segment));self.assertTrue(bool(self.table.item(0,16).data(Qt.UserRole+7)));self.assertEqual(delegate.badge_color(True).name(),"#153a66");self.assertNotEqual(delegate.badge_color(True).name(),delegate.badge_color(False).name())
+
+    def test_detail_cell_click_opens_the_matching_row(self):
+        self.window.show();item=self.table.item(0,16);self.table.scrollToItem(item);APP.processEvents();uid=self.table.item(0,0).data(Qt.UserRole)
+        with patch.object(self.page,"edit_details") as edit:
+            QTest.mouseClick(self.table.viewport(),Qt.LeftButton,pos=self.table.visualItemRect(item).center());APP.processEvents()
+        edit.assert_called_once_with(uid)
 
     def test_comparison_review_buttons_keep_full_text_height(self):
         self.fill_row(0);self.fill_row(1);self.page.save_current();project=self.window.project
@@ -197,13 +208,13 @@ class FastArterialUiTest(unittest.TestCase):
         self.assertEqual((self.table.currentRow(),self.table.currentColumn()),(0,13))
 
     def test_numeric_editor_shows_input_immediately(self):
-        self.window.show();self.table.setCurrentCell(0,10);self.table.editItem(self.table.item(0,10));APP.processEvents()
-        editor=APP.focusWidget();QTest.keyClicks(editor,"120");APP.processEvents()
+        self.window.show();self.table.setFocus();self.table.setCurrentCell(0,10);self.table.editItem(self.table.item(0,10));APP.processEvents()
+        editor=next(widget for widget in self.table.findChildren(QLineEdit) if widget.isVisible() and widget.property("navCol")==10);QTest.keyClicks(editor,"120");APP.processEvents()
         self.assertEqual(editor.text(),"120")
 
     def test_first_numeric_key_is_visible_when_it_starts_editing(self):
-        self.window.show();self.table.setCurrentCell(0,10);APP.processEvents();QTest.keyClick(self.table,Qt.Key_1);APP.processEvents()
-        editor=APP.focusWidget();self.assertIsInstance(editor,QLineEdit);self.assertEqual(editor.text(),"1")
+        self.window.show();self.table.setFocus();self.table.setCurrentCell(0,10);APP.processEvents();QTest.keyClick(self.table,Qt.Key_1);APP.processEvents()
+        editor=next(widget for widget in self.table.findChildren(QLineEdit) if widget.isVisible() and widget.property("navCol")==10);self.assertEqual(editor.text(),"1")
 
     def test_numeric_ranges_and_green_not_over_cycle(self):
         self.table.item(0,8).setText("14");self.table.item(0,10).setText("100");self.table.item(0,11).setText("120");self.table.item(0,13).setText("1.25")
@@ -300,6 +311,8 @@ class FastArterialUiTest(unittest.TestCase):
         for header in self.page.HEADERS[7:]:
             self.assertLessEqual(max(map(len,header.splitlines())),6)
         self.assertGreaterEqual(self.table.horizontalHeader().height(),64)
+        self.assertEqual(self.page.HEADERS[19],"교차로\n서비스수준\n(참고)")
+        self.assertEqual(self.page.HEADERS[20],"접근로\n서비스수준\n(참고)")
 
     def test_analysis_tab_plus_is_centered_and_close_sits_by_label(self):
         self.window.project.ensure_tab("사업 미시행시",2033);self.page.refresh_tabs(("사업 미시행시",2033))
@@ -484,9 +497,10 @@ class FastArterialUiTest(unittest.TestCase):
         self.assertLessEqual(bottom,self.table.viewport().height())
         self.assertLessEqual(self.table.rowHeight(0),21)
         self.assertGreaterEqual(self.table.horizontalHeader().height(),64)
+        delegate=self.table.itemDelegateForColumn(16)
         for row in range(20):
-            button=self.table.cellWidget(row,16)
-            self.assertLessEqual(button.height(),self.table.rowHeight(row))
+            badge=delegate.badge_rect(QRect(0,0,self.table.columnWidth(16),self.table.rowHeight(row)))
+            self.assertGreaterEqual(badge.height(),self.table.fontMetrics().height())
         self.page.save_current();project=self.window.project
         for scenario in ("사업 미시행시","사업 시행시"):
             project.ensure_tab(scenario,2033);project.copy_rows("현황",2026,scenario,2033)

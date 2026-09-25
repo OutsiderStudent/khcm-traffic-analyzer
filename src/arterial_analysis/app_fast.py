@@ -16,7 +16,7 @@ from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPointF, QRectF, QSett
 from PySide6.QtGui import QAction, QColor, QFont, QGuiApplication, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QMainWindow,
-    QHeaderView, QInputDialog, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSpinBox, QStackedWidget, QTabBar, QTabWidget, QTableWidgetItem,
+    QHeaderView, QInputDialog, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSpinBox, QStackedWidget, QStyle, QTabBar, QTabWidget, QTableWidgetItem,
     QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
 from .app import GuidelinePage
@@ -33,7 +33,7 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.8.5"
+APP_VERSION = "1.8.6"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -377,6 +377,26 @@ def blank_project(year=2026):
 from PySide6.QtWidgets import QStyledItemDelegate
 
 
+def detail_is_modified(segment):
+    """상세창의 '기본값' 버튼과 비교해 사용자 지정 조건이 있는지 판정한다."""
+    equal=lambda value,default: value is None or math.isclose(float(value),float(default),rel_tol=0,abs_tol=1e-9)
+    return any((
+        segment.functional_class!="저규격",
+        segment.road_condition_override!="보통",
+        segment.arterial_type_override!="자동",
+        int(segment.bus_stops or 0)!=0,
+        int(segment.access_points or 0)!=0,
+        int(segment.crossing_signals or 0)!=0,
+        not equal(segment.analysis_period_h,.25),
+        not equal(segment.base_saturation_flow,2200),
+        not equal(segment.saturation_adjustment,1),
+        not equal(segment.initial_queue,0),
+        bool(segment.coordinated),
+        segment.pf_override not in (None,0),
+        segment.fcw_override not in (None,0),
+    ))
+
+
 class CompactCellComboBox(QComboBox):
     """표 셀에서는 화살표보다 입력 문구에 폭을 우선 배정한다."""
     def _fit_line_edit(self):
@@ -398,6 +418,27 @@ class ElidedLabel(QLabel):
     def _apply_elision(self):
         super().setText(self.fontMetrics().elidedText(self._full_text,Qt.ElideMiddle,max(40,self.width()-4)))
     def resizeEvent(self,event):super().resizeEvent(event);self._apply_elision()
+
+
+class DetailCellDelegate(QStyledItemDelegate):
+    """행 높이와 운영체제 버튼 스타일에 영향받지 않는 상세 셀 버튼."""
+
+    RADIUS=8
+
+    @staticmethod
+    def badge_rect(rect):
+        return rect.adjusted(5,2,-5,-2)
+
+    @staticmethod
+    def badge_color(modified,hovered=False):
+        if modified:return QColor("#0F2F57" if hovered else "#153A66")
+        return QColor("#1B6BD7" if hovered else "#2375E8")
+
+    def paint(self,painter,option,index):
+        painter.save();painter.setRenderHint(QPainter.Antialiasing)
+        rect=self.badge_rect(option.rect);hovered=bool(option.state&QStyle.State_MouseOver);modified=bool(index.data(Qt.UserRole+7))
+        painter.setPen(Qt.NoPen);painter.setBrush(self.badge_color(modified,hovered));painter.drawRoundedRect(rect,self.RADIUS,self.RADIUS)
+        font=option.font;font.setBold(True);painter.setFont(font);painter.setPen(QColor("#FFFFFF"));painter.drawText(rect,Qt.AlignCenter,"상세");painter.restore()
 
 
 class FastComboDelegate(QStyledItemDelegate):
@@ -491,6 +532,7 @@ class FastInputTable(FrozenInputTable):
             self.linkRequested.emit(row);event.accept();return
         if row>=0 and col in self._editable_columns() and col in (7,8,10,11,12,13,17,18) and event.text() and re.fullmatch(r"[0-9.]",event.text()):
             self.editItem(self.item(row,col));QApplication.processEvents();editor=QApplication.focusWidget()
+            if not isinstance(editor,QLineEdit):editor=next((widget for widget in self.findChildren(QLineEdit) if widget.isVisible() and widget.property("navRow")==row and widget.property("navCol")==col),None)
             if isinstance(editor,QLineEdit):editor.selectAll();editor.insert(event.text());editor.update();editor.repaint()
             event.accept();return
         if key==Qt.Key_F2 and row>=0: self.editItem(self.item(row,col)); event.accept(); return
@@ -664,7 +706,7 @@ class FastDetailDialog(SegmentDetailDialog):
 
 class InputPage(QWidget):
     changed=Signal()
-    HEADERS=["선택","가로명","교차로\n번호","교차로명","↔","교차로\n번호","교차로명","구간길이\n(m)","본선\n차로수\n(편도)","유형\n번호","주기\n(초)","녹색시간\n(초)","교통량\n(대/시)","PHF","평균\n통행속도\n(km/h)","서비스수준\n(LOS)","상세","보고서\n구간길이\n(m)","보고서\n교통량\n(대/시)","교차로\n서비스수준\n(LOS)\n(참고)","접근로\n서비스수준\n(LOS)\n(참고)","제한속도\n(km/h)\n(참고)"]
+    HEADERS=["선택","가로명","교차로\n번호","교차로명","↔","교차로\n번호","교차로명","구간길이\n(m)","본선\n차로수\n(편도)","유형\n번호","주기\n(초)","녹색시간\n(초)","교통량\n(대/시)","PHF","평균\n통행속도\n(km/h)","서비스수준\n(LOS)","상세","보고서\n구간길이\n(m)","보고서\n교통량\n(대/시)","교차로\n서비스수준\n(참고)","접근로\n서비스수준\n(참고)","제한속도\n(km/h)\n(참고)"]
     INTEGER={7,8,10,11,12,17,18,21}; NUMERIC={7,8,10,11,12,13,14,17,18,21}; READONLY={0,9,14,15,16}
     def __init__(self,project):
         super().__init__();self.project=project;self.current_key=None;self._changing=False;self._clipboard=[];self._link_table=None;self._link_row=-1;self._link_col=-1;self._link_window=None;self._link_timer=None;self._enter_was_down=False;self._escape_was_down=False;self.diagram_dialog=None;self._refresh_timer=QTimer(self);self._refresh_timer.setSingleShot(True);self._refresh_timer.setInterval(450);self._refresh_timer.timeout.connect(self.refresh_links)
@@ -703,12 +745,16 @@ class InputPage(QWidget):
         t.setItemDelegateForColumn(8,BlankNumericDelegate(True,0,10,table=t,parent=t))
         t.setItemDelegateForColumn(11,GreenTimeDelegate(True,0,10000,table=t,parent=t))
         t.setItemDelegateForColumn(13,BlankNumericDelegate(False,0,1,2,table=t,parent=t))
+        t.setItemDelegateForColumn(16,DetailCellDelegate(t))
         for c in (19,20):t.setItemDelegateForColumn(c,FastComboDelegate(["","A","B","C","D","E","F","FF","FFF"],True,t,t))
         for c,(header_color,_) in OPTIONAL_COLUMN_COLORS.items():t.horizontalHeaderItem(c).setBackground(QColor(header_color));t.horizontalHeaderItem(c).setForeground(QColor("#414B67"))
         for c in (17,18,19,20,21):t.setColumnHidden(c,True)
         t._replace_link_shortcut=QShortcut(QKeySequence("Ctrl+H"),t);t._replace_link_shortcut.setContext(Qt.WidgetWithChildrenShortcut);t._replace_link_shortcut.activated.connect(lambda table=t:self.replace_excel_sources(table))
-        t.itemChanged.connect(lambda item,table=t:self.item_changed(table,item));t.currentCellChanged.connect(lambda r,c,pr,pc,table=t:(self.commit_row(table,pr,pc) if pr>=0 and pc!=0 else None,self.cell_selected(table,r,c)));t.cellPressed.connect(lambda r,c,table=t:self.open_combo_on_click(table,table,r,c));t.frozen.pressed.connect(lambda index,table=t:self.open_combo_on_click(table,table.frozen,index.row(),index.column()));t.linkRequested.connect(lambda row,table=t:self.start_link(table,row));t.formulasPasted.connect(lambda entries,table=t:self.apply_pasted_formulas(table,entries));t.refreshRequested.connect(self.refresh_links);t.compareRequested.connect(self.toggle_compare);t.toggleOptionalRequested.connect(self.toggle_optional);t.addRequested.connect(self.add_pair);t.copySegmentsRequested.connect(self.copy_selected);t.pasteSegmentsRequested.connect(self.paste_selected);t.deleteRequested.connect(self.delete_selected);t.commitRequested.connect(lambda row,col,back,table=t:self.commit_row(table,row,col,back))
+        t.itemChanged.connect(lambda item,table=t:self.item_changed(table,item));t.currentCellChanged.connect(lambda r,c,pr,pc,table=t:(self.commit_row(table,pr,pc) if pr>=0 and pc!=0 else None,self.cell_selected(table,r,c)));t.cellPressed.connect(lambda r,c,table=t:self.open_combo_on_click(table,table,r,c));t.cellClicked.connect(lambda r,c,table=t:self.open_detail_cell(table,r,c));t.frozen.pressed.connect(lambda index,table=t:self.open_combo_on_click(table,table.frozen,index.row(),index.column()));t.linkRequested.connect(lambda row,table=t:self.start_link(table,row));t.formulasPasted.connect(lambda entries,table=t:self.apply_pasted_formulas(table,entries));t.refreshRequested.connect(self.refresh_links);t.compareRequested.connect(self.toggle_compare);t.toggleOptionalRequested.connect(self.toggle_optional);t.addRequested.connect(self.add_pair);t.copySegmentsRequested.connect(self.copy_selected);t.pasteSegmentsRequested.connect(self.paste_selected);t.deleteRequested.connect(self.delete_selected);t.commitRequested.connect(lambda row,col,back,table=t:self.commit_row(table,row,col,back))
         return t
+    def open_detail_cell(self,table,row,col):
+        if col!=16 or row<0 or not table.item(row,0):return
+        self.edit_details(table.item(row,0).data(Qt.UserRole))
     def open_combo_on_click(self,table,view,row,col):
         if col not in (1,3,4,6,19,20) or not table.item(row,col):return
         index=table.model().index(row,col);view.setCurrentIndex(index);view.edit(index)
@@ -793,11 +839,12 @@ class InputPage(QWidget):
         except Exception:r=None
         condition=s.road_condition_override if s.road_condition_override in ("양호","보통") else road_condition(s.functional_class,s.lanes)
         type_number=(s.arterial_type_override if s.arterial_type_override not in ("","자동") else arterial_type(s.functional_class,condition)).replace("유형 ","유형")
-        values=["",s.road_name,s.start_number,s.start_name,s.direction,s.end_number,s.end_name,text("length_km",round(s.length_km*1000),"{:,}"),text("lanes",s.lanes,"{:,}"),type_number,text("cycle_s",round(s.cycle_s),"{:,}"),text("green_s",round(s.green_s),"{:,}"),text("main_volume",round(s.main_volume),"{:,}"),text("phf",s.phf,"{:.2f}"),f"{r.speed_kmh:.1f}" if r else "",r.los if r else "","",("" if s.report_length_km is None else f"{round(s.report_length_km*1000):,}"),("" if s.report_volume is None else f"{round(s.report_volume):,}"),s.intersection_los,s.approach_los,("" if s.speed_limit_kmh is None else f"{round(s.speed_limit_kmh):,}")]
+        values=["",s.road_name,s.start_number,s.start_name,s.direction,s.end_number,s.end_name,text("length_km",round(s.length_km*1000),"{:,}"),text("lanes",s.lanes,"{:,}"),type_number,text("cycle_s",round(s.cycle_s),"{:,}"),text("green_s",round(s.green_s),"{:,}"),text("main_volume",round(s.main_volume),"{:,}"),text("phf",s.phf,"{:.2f}"),f"{r.speed_kmh:.1f}" if r else "",r.los if r else "","상세",("" if s.report_length_km is None else f"{round(s.report_length_km*1000):,}"),("" if s.report_volume is None else f"{round(s.report_volume):,}"),s.intersection_los,s.approach_los,("" if s.speed_limit_kmh is None else f"{round(s.speed_limit_kmh):,}")]
         row=t.rowCount();t.insertRow(row)
         for c,value in enumerate(values):
             item=QTableWidgetItem(str(value));item.setData(Qt.UserRole,s.uid if c==0 else None);item.setData(Qt.UserRole+1,s.comparison_id if c==0 else None);item.setTextAlignment((Qt.AlignRight if c in self.NUMERIC and c!=8 else Qt.AlignCenter)|Qt.AlignVCenter)
             if c==0:item.setFlags(Qt.ItemIsEnabled|Qt.ItemIsUserCheckable|Qt.ItemIsSelectable);item.setCheckState(Qt.Unchecked)
+            if c==16:item.setData(Qt.UserRole+7,detail_is_modified(s));item.setToolTip("기본값과 다른 상세조건이 있습니다." if detail_is_modified(s) else "구간별 상세조건")
             if c in self.READONLY:item.setFlags(item.flags()&~Qt.ItemIsEditable)
             if c in (14,15):item.setBackground(QColor("#DDF4FF"));item.setForeground(QColor("#075985"))
             if c in OPTIONAL_COLUMN_COLORS:item.setBackground(QColor(OPTIONAL_COLUMN_COLORS[c][1]));item.setForeground(QColor("#414B67"))
@@ -810,7 +857,6 @@ class InputPage(QWidget):
                 else:item.setToolTip("Excel 아이콘을 누르거나 = 키로 원본 셀을 연결할 수 있습니다.")
             t.setItem(row,c,item)
         pair=["#DCEBFF","#E8F5E9","#FFF1D6","#F3E8FF"][sum(ord(ch) for ch in s.comparison_id)%4];t.item(row,0).setBackground(QColor(pair))
-        button=QPushButton("상세");button.setObjectName("detailButton");button.setFixedHeight(21);button.clicked.connect(lambda _=False,uid=s.uid:self.edit_details(uid));t.setCellWidget(row,16,button)
     @staticmethod
     def merge_pairs(t):
         t.clearSpans();t.frozen.clearSpans();row=0
@@ -1487,10 +1533,9 @@ QPushButton{background:white;border:1px solid #DDE3EC;border-radius:8px;padding:
 QPushButton:hover{background:#F0F5FF;border-color:#8CB9F5}
 QPushButton:pressed{background:#DCEAFF;border-color:#2375E8}
 QPushButton:focus{border:2px solid #2375E8}
-QPushButton#primaryButton,QPushButton#detailButton{background:#2375E8;color:white;border-color:#2375E8}
-QPushButton#detailButton{padding:1px 6px;min-height:0;margin:0 3px}
-QPushButton#primaryButton:hover,QPushButton#detailButton:hover{background:#1B6BD7;border-color:#1B6BD7}
-QPushButton#primaryButton:pressed,QPushButton#detailButton:pressed{background:#155FC7;border-color:#155FC7;color:white}
+QPushButton#primaryButton{background:#2375E8;color:white;border-color:#2375E8}
+QPushButton#primaryButton:hover{background:#1B6BD7;border-color:#1B6BD7}
+QPushButton#primaryButton:pressed{background:#155FC7;border-color:#155FC7;color:white}
 QPushButton#reviewButton{padding:4px 7px}
 QPushButton#reviewButton:pressed{background:#FFE4AF;border-color:#D97706;color:#7A3900}
 QToolButton#tabCloseButton:pressed{background:#FBCACA;color:#9F1239}
