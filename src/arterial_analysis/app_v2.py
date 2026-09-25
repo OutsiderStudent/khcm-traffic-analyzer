@@ -157,16 +157,7 @@ class CenterCheckDelegate(QStyledItemDelegate):
         activate=event.type()==QEvent.MouseButtonRelease or (event.type()==QEvent.KeyPress and event.key() in (Qt.Key_Space,Qt.Key_Select))
         if not activate:return False
         state=index.data(Qt.CheckStateRole);checked=state in (Qt.Checked,Qt.CheckState.Checked,2)
-        # 체크 선택은 표의 현재 셀 선택과 별개다. 클릭할 때 기존에 체크한
-        # 다른 구간을 그대로 보존해 여러 구간을 연속 선택할 수 있게 한다.
-        checked_rows={row for row in range(model.rowCount()) if row!=index.row() and model.index(row,index.column()).data(Qt.CheckStateRole) in (Qt.Checked,Qt.CheckState.Checked,2)}
-        owner=option.widget if isinstance(option.widget,QTableWidget) else option.widget.parent()
-        if owner:owner.blockSignals(True)
         model.setData(index,Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked,Qt.CheckStateRole)
-        for row in checked_rows:model.setData(model.index(row,index.column()),Qt.CheckState.Checked,Qt.CheckStateRole)
-        if owner:
-            owner.blockSignals(False);owner.viewport().update()
-            if hasattr(owner,"frozen"):owner.frozen.viewport().update()
         return True
 
 

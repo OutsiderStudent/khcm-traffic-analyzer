@@ -36,7 +36,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.8.4")
+        self.assertEqual(APP_VERSION,"1.8.5")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -78,7 +78,7 @@ class FastArterialUiTest(unittest.TestCase):
     def test_compact_detail_button_keeps_text_height(self):
         button=self.table.cellWidget(0,16)
         self.assertGreaterEqual(button.height(),button.fontMetrics().height()+3)
-        self.assertLessEqual(button.height()+2,self.table.rowHeight(0))
+        self.assertLessEqual(button.height(),self.table.rowHeight(0))
 
     def test_comparison_review_buttons_keep_full_text_height(self):
         self.fill_row(0);self.fill_row(1);self.page.save_current();project=self.window.project
@@ -167,13 +167,20 @@ class FastArterialUiTest(unittest.TestCase):
         self.assertEqual(self.page.selected_rows(),[0,1])
 
     def test_multiple_pairs_remain_checked_after_mouse_clicks(self):
-        self.page.add_pair();self.page.add_pair();self.window.show();APP.processEvents()
+        for _ in range(9):self.page.add_pair()
+        self.window.show();APP.processEvents()
         view=self.table.frozen
-        for row in (0,2,4):
-            index=self.table.model().index(row,0)
-            QTest.mouseClick(view.viewport(),Qt.LeftButton,pos=view.visualRect(index).center());APP.processEvents()
-        self.assertEqual(self.page.selected_rows(),[0,1,2,3,4,5])
-        self.assertTrue(all(self.table.item(row,0).checkState()==Qt.Checked for row in (0,2,4)))
+        rows=tuple(range(0,20,2))
+        with patch.object(self.page._refresh_timer,"start") as refresh_start:
+            for row in rows:
+                index=self.table.model().index(row,0)
+                self.table.scrollTo(self.table.model().index(row,1));APP.processEvents()
+                QTest.mouseClick(view.viewport(),Qt.LeftButton,pos=view.visualRect(index).center());APP.processEvents()
+        refresh_start.assert_not_called()
+        self.assertEqual(self.page.selected_rows(),list(range(20)))
+        self.assertTrue(all(self.table.item(row,0).checkState()==Qt.Checked for row in rows))
+        self.page.load_key(self.page.current_key);APP.processEvents()
+        self.assertEqual(self.page.selected_rows(),list(range(20)))
 
     def test_tab_commits_and_moves_through_editors(self):
         self.window.show(); self.table.setCurrentCell(0,1); self.table.editItem(self.table.item(0,1)); APP.processEvents()
@@ -292,7 +299,7 @@ class FastArterialUiTest(unittest.TestCase):
     def test_narrow_metric_headers_are_wrapped_without_long_lines(self):
         for header in self.page.HEADERS[7:]:
             self.assertLessEqual(max(map(len,header.splitlines())),6)
-        self.assertGreaterEqual(self.table.horizontalHeader().height(),54)
+        self.assertGreaterEqual(self.table.horizontalHeader().height(),64)
 
     def test_analysis_tab_plus_is_centered_and_close_sits_by_label(self):
         self.window.project.ensure_tab("사업 미시행시",2033);self.page.refresh_tabs(("사업 미시행시",2033))
@@ -475,11 +482,11 @@ class FastArterialUiTest(unittest.TestCase):
         self.window.resize(1920,1000);self.window.show();APP.processEvents()
         bottom=self.table.rowViewportPosition(19)+self.table.rowHeight(19)
         self.assertLessEqual(bottom,self.table.viewport().height())
-        self.assertLessEqual(self.table.rowHeight(0),22)
-        self.assertLessEqual(self.table.horizontalHeader().height(),56)
+        self.assertLessEqual(self.table.rowHeight(0),21)
+        self.assertGreaterEqual(self.table.horizontalHeader().height(),64)
         for row in range(20):
             button=self.table.cellWidget(row,16)
-            self.assertLessEqual(button.height()+2,self.table.rowHeight(row))
+            self.assertLessEqual(button.height(),self.table.rowHeight(row))
         self.page.save_current();project=self.window.project
         for scenario in ("사업 미시행시","사업 시행시"):
             project.ensure_tab(scenario,2033);project.copy_rows("현황",2026,scenario,2033)
