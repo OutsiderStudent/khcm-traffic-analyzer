@@ -33,7 +33,7 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.8.3"
+APP_VERSION = "1.8.4"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -691,7 +691,7 @@ class InputPage(QWidget):
         self.add.clicked.connect(self.add_pair);self.copy.clicked.connect(self.copy_selected);self.paste.clicked.connect(self.paste_selected);self.delete.clicked.connect(self.delete_selected);self.reset.clicked.connect(self.reset_selected);self.diagram_button.clicked.connect(self.show_network_diagram);self.optional.clicked.connect(self.toggle_optional);self.import_intersection_los.clicked.connect(self.load_intersection_los)
         self._diagram_shortcut=QShortcut(QKeySequence("F6"),self);self._diagram_shortcut.setContext(Qt.WidgetWithChildrenShortcut);self._diagram_shortcut.activated.connect(self.show_network_diagram);self.changed.connect(self.refresh_network_diagram);self.refresh_tabs()
     def _make_table(self):
-        t=FastInputTable(0,len(self.HEADERS));header=OptionalColorHeader(t);t.setHorizontalHeader(header);header.sectionResized.connect(t._sync_width);t.setHorizontalHeaderLabels(self.HEADERS);t.verticalHeader().hide();t.verticalHeader().setDefaultSectionSize(25);t.frozen.verticalHeader().setDefaultSectionSize(25);t.setAlternatingRowColors(True);t.setSelectionMode(QAbstractItemView.ExtendedSelection);t.setSelectionBehavior(QAbstractItemView.SelectItems);t.setEditTriggers(QAbstractItemView.AllEditTriggers);t.setIconSize(QSize(13,13));t.frozen.setIconSize(QSize(13,13));t.horizontalHeader().setFixedHeight(66);t.frozen.horizontalHeader().setFixedHeight(66)
+        t=FastInputTable(0,len(self.HEADERS));header=OptionalColorHeader(t);t.setHorizontalHeader(header);header.sectionResized.connect(t._sync_width);t.setHorizontalHeaderLabels(self.HEADERS);t.verticalHeader().hide();t.verticalHeader().setDefaultSectionSize(22);t.frozen.verticalHeader().setDefaultSectionSize(22);t.setAlternatingRowColors(True);t.setSelectionMode(QAbstractItemView.ExtendedSelection);t.setSelectionBehavior(QAbstractItemView.SelectItems);t.setEditTriggers(QAbstractItemView.AllEditTriggers);t.setIconSize(QSize(13,13));t.frozen.setIconSize(QSize(13,13));t.horizontalHeader().setFixedHeight(56);t.frozen.horizontalHeader().setFixedHeight(56)
         header_font=t.horizontalHeader().font();header_font.setPointSizeF(7.8);t.horizontalHeader().setFont(header_font);t.frozen.horizontalHeader().setFont(header_font)
         widths=[44,82,40,118,30,40,118]+[70]*15
         for c,w in enumerate(widths):t.setColumnWidth(c,w)
@@ -807,7 +807,7 @@ class InputPage(QWidget):
                 else:item.setToolTip("Excel 아이콘을 누르거나 = 키로 원본 셀을 연결할 수 있습니다.")
             t.setItem(row,c,item)
         pair=["#DCEBFF","#E8F5E9","#FFF1D6","#F3E8FF"][sum(ord(ch) for ch in s.comparison_id)%4];t.item(row,0).setBackground(QColor(pair))
-        button=QPushButton("상세");button.setObjectName("detailButton");button.setMinimumHeight(max(27,button.fontMetrics().height()+8));button.clicked.connect(lambda _=False,uid=s.uid:self.edit_details(uid));t.setCellWidget(row,16,button)
+        button=QPushButton("상세");button.setObjectName("detailButton");button.setFixedHeight(min(20,max(18,button.fontMetrics().height()+3)));button.clicked.connect(lambda _=False,uid=s.uid:self.edit_details(uid));t.setCellWidget(row,16,button)
     @staticmethod
     def merge_pairs(t):
         t.clearSpans();t.frozen.clearSpans();row=0
@@ -872,6 +872,9 @@ class InputPage(QWidget):
             except ValueError:pass
         t.blockSignals(False)
     def item_changed(self,t,item):
+        # 체크박스는 여러 구간을 고르는 UI 상태일 뿐 입력 데이터가 아니다.
+        # 일반 셀처럼 저장·재계산하면 연속 선택 도중 상태가 흔들릴 수 있다.
+        if item.column()==0:return
         if item.column() in self.NUMERIC and item.column()!=8:item.setTextAlignment(Qt.AlignRight|Qt.AlignVCenter)
         else:item.setTextAlignment(Qt.AlignCenter|Qt.AlignVCenter)
         if item.column() in (2,3,5,6):
@@ -1478,7 +1481,7 @@ QPushButton:hover{background:#F0F5FF;border-color:#8CB9F5}
 QPushButton:pressed{background:#DCEAFF;border-color:#2375E8}
 QPushButton:focus{border:2px solid #2375E8}
 QPushButton#primaryButton,QPushButton#detailButton{background:#2375E8;color:white;border-color:#2375E8}
-QPushButton#detailButton{padding:3px 7px;min-height:18px}
+QPushButton#detailButton{padding:1px 6px;min-height:0;margin:1px 3px}
 QPushButton#primaryButton:hover,QPushButton#detailButton:hover{background:#1B6BD7;border-color:#1B6BD7}
 QPushButton#primaryButton:pressed,QPushButton#detailButton:pressed{background:#155FC7;border-color:#155FC7;color:white}
 QPushButton#reviewButton{padding:4px 7px}
