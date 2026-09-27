@@ -2,20 +2,44 @@ name: Build and release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*.*.*"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  windows-release:
-    runs-on: windows-latest
+  windows-build:
+    name: Windows ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            python-arch: x64
+            expected-machine: AMD64
+          - arch: arm64
+            runner: windows-11-arm
+            python-arch: arm64
+            expected-machine: ARM64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          architecture: ${{ matrix.python-arch }}
+      - name: Verify build architecture
+        shell: powershell
+        run: |
+          $machine = python -c "import platform; print(platform.machine())"
+          if ($machine.Trim().ToUpperInvariant() -ne '${{ matrix.expected-machine }}') {
+            throw "Expected ${{ matrix.expected-machine }}, got $machine"
+          }
       - name: Install dependencies
         run: python -m pip install .[dev]
       - name: Run tests
@@ -25,13 +49,42 @@ jobs:
       - name: Build executable
         shell: powershell
         run: .\build.ps1
+      - name: Prepare release asset
+        shell: powershell
+        run: |
+          $builtExe = Get-ChildItem -LiteralPath dist -Filter '*.exe' | Select-Object -First 1
+          if (-not $builtExe) { throw 'Built executable not found.' }
+          $version = '${{ github.ref_name }}'
+          if (-not $version.StartsWith('v')) { $version = 'v1.9.0-preview' }
+          $releaseAsset = "dist/KHCM-Traffic-Analyzer_${version}_${{ matrix.arch }}.exe"
+          Copy-Item -LiteralPath $builtExe.FullName -Destination $releaseAsset
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}
+          path: dist/KHCM-Traffic-Analyzer_*_${{ matrix.arch }}.exe
+          if-no-files-found: error
+
+  github-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: windows-build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: windows-*
+          path: release-assets
+          merge-multiple: true
+      - name: Create backward-compatible x64 asset
+        shell: powershell
+        run: |
+          $x64 = Get-ChildItem -LiteralPath release-assets -Filter '*_x64.exe' | Select-Object -First 1
+          if (-not $x64) { throw 'x64 executable not found.' }
+          Copy-Item -LiteralPath $x64.FullName -Destination "release-assets/KHCM-Traffic-Analyzer_${{ github.ref_name }}.exe"
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: powershell
         run: |
-          $builtExe = Get-ChildItem -LiteralPath dist -Filter '*.exe' | Select-Object -First 1
-          if (-not $builtExe) { throw 'Built executable not found.' }
-          $releaseAsset = "dist/KHCM-Traffic-Analyzer_${{ github.ref_name }}.exe"
-          Copy-Item -LiteralPath $builtExe.FullName -Destination $releaseAsset
-          gh release create "${{ github.ref_name }}" $releaseAsset --generate-notes --title "KHCM Traffic Analyzer ${{ github.ref_name }}"
+          $assets = Get-ChildItem -LiteralPath release-assets -Filter '*.exe' | ForEach-Object { $_.FullName }
+          if ($assets.Count -ne 3) { throw "Expected 3 release assets, got $($assets.Count)." }
+          gh release create "${{ github.ref_name }}" @assets --generate-notes --title "KHCM Traffic Analyzer ${{ github.ref_name }}"

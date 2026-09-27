@@ -17,7 +17,7 @@
 
 현재는 도시 및 교외간선도로 분석을 제공하며, 향후 교차로 분석 등 도로용량편람 기반 모듈을 같은 프로그램에 확장할 예정입니다.
 
-일반 사용자는 [Releases](https://github.com/OutsiderStudent/khcm-traffic-analyzer/releases)에서 최신 EXE를 내려받아 실행합니다.
+일반 사용자는 [Releases](https://github.com/OutsiderStudent/khcm-traffic-analyzer/releases)에서 장치에 맞는 최신 EXE를 내려받아 실행합니다. 일반 Intel·AMD Windows PC는 `x64`, Snapdragon 기반 Surface 등 Windows ARM 장치는 `arm64` 파일을 사용합니다.
 
 개발 실행:
 
@@ -35,7 +35,7 @@ py -3 -m venv .venv
 
 ## 배포
 
-`v1.3.0`처럼 버전 태그를 GitHub에 푸시하면 Windows 실행파일을 빌드하고 GitHub Release에 첨부합니다. 프로그램은 시작 후 최신 Release를 비동기로 확인하며, 새 버전이 있을 때만 다운로드 페이지를 안내합니다.
+`v1.3.0`처럼 버전 태그를 GitHub에 푸시하면 Windows x64와 ARM64 실행파일을 각각 빌드하고 GitHub Release에 첨부합니다. 프로그램은 시작 후 최신 Release를 비동기로 확인하며, 새 버전이 있을 때 현재 장치 아키텍처에 맞는 파일을 내려받아 검증하고 교체합니다.
 
 ## 주의
 

@@ -33,7 +33,7 @@ from .updater import UpdateController
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.8.7"
+APP_VERSION = "1.9.0"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -207,19 +207,20 @@ class NetworkDiagramWidget(QWidget):
     def paintEvent(self,event):
         # Keep hit targets in sync with the current frame, including an empty diagram.
         self._hit_edges=[];self._arrow_segments=[];self._label_boxes=[]
-        painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing);painter.fillRect(self.rect(),QColor("#FFFFFF"))
-        painter.setPen(QColor("#334155"));title_font=QFont(painter.font());title_font.setBold(True);title_font.setPointSize(11);painter.setFont(title_font);painter.drawText(QRectF(18,12,self.width()-36,28),Qt.AlignLeft|Qt.AlignVCenter,self.title)
+        dark=self.palette().color(QPalette.Window).lightness()<128;background=QColor("#1E2633" if dark else "#FFFFFF");text_color=QColor("#F2F4F7" if dark else "#334155");muted_color=QColor("#B0BAC8" if dark else "#64748B");label_background=QColor(30,38,51,235) if dark else QColor(255,255,255,232);external_color=QColor("#77A4ED" if dark else "#2563EB");internal_color=QColor("#4ECF8D" if dark else "#059669")
+        painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing);painter.fillRect(self.rect(),background)
+        painter.setPen(text_color);title_font=QFont(painter.font());title_font.setBold(True);title_font.setPointSize(11);painter.setFont(title_font);painter.drawText(QRectF(18,12,self.width()-36,28),Qt.AlignLeft|Qt.AlignVCenter,self.title)
         if not self.edges:
-            painter.setPen(QColor("#64748B"));body=QFont(painter.font());body.setBold(False);body.setPointSize(10);painter.setFont(body);painter.drawText(QRectF(30,70,self.width()-60,self.height()-100),Qt.AlignCenter|Qt.TextWordWrap,"교차로 번호와 교차로명을 입력하면 구간 연결 관계도가 자동으로 표시됩니다.")
+            painter.setPen(muted_color);body=QFont(painter.font());body.setBold(False);body.setPointSize(10);painter.setFont(body);painter.drawText(QRectF(30,70,self.width()-60,self.height()-100),Qt.AlignCenter|Qt.TextWordWrap,"교차로 번호와 교차로명을 입력하면 구간 연결 관계도가 자동으로 표시됩니다.")
             return
-        painter.setFont(QFont(painter.font().family(),9));painter.setPen(QColor("#2563EB"));painter.drawText(QRectF(18,40,150,22),Qt.AlignLeft|Qt.AlignVCenter,"━ 외부도로")
-        painter.setPen(QColor("#059669"));painter.drawText(QRectF(170,40,150,22),Qt.AlignLeft|Qt.AlignVCenter,"━ 내부도로")
+        painter.setFont(QFont(painter.font().family(),9));painter.setPen(external_color);painter.drawText(QRectF(18,40,150,22),Qt.AlignLeft|Qt.AlignVCenter,"━ 외부도로")
+        painter.setPen(internal_color);painter.drawText(QRectF(170,40,150,22),Qt.AlignLeft|Qt.AlignVCenter,"━ 내부도로")
         area=QRectF(58,78,max(100,self.width()-116),max(100,self.height()-145));positions=self._positions(area);label_bounds=QRectF(20,68,max(100,self.width()-40),max(100,self.height()-108))
         occupied=[QRectF(point.x()-72,point.y()-28,144,82) for point in positions.values()]
         label_font=QFont(painter.font());label_font.setPointSize(9)
         for edge in self.edges:
             first,second=positions[edge["start"]],positions[edge["end"]];highlight=bool(self.highlight_uids&edge["uids"])
-            categories=edge["categories"];color=QColor("#7C3AED" if len(categories)>1 else ("#059669" if INTERNAL in categories else "#2563EB"))
+            categories=edge["categories"];color=QColor("#B89AF7" if dark else "#7C3AED") if len(categories)>1 else (internal_color if INTERNAL in categories else external_color)
             painter.setPen(QPen(QColor("#F59E0B") if highlight else color,4 if highlight else 2));painter.drawLine(first,second)
             roads=" · ".join(sorted(edge["roads"]));mid=(first+second)/2
             dx=second.x()-first.x();dy=second.y()-first.y();length=max(1,math.hypot(dx,dy));ux,uy=dx/length,dy/length;nx,ny=-uy,ux;axis=QPointF(ux,uy);normal=QPointF(nx,ny)
@@ -231,7 +232,7 @@ class NetworkDiagramWidget(QWidget):
                 occupied.append(QRectF(arrow_mid.x()-25,arrow_mid.y()-11,50,22))
             box=self._place_label_box(mid,156,22,occupied,label_bounds,axis,normal);self._hit_edges.append((edge,first,second,box));self._label_boxes.append(box)
             if roads:
-                metrics=painter.fontMetrics();text=metrics.elidedText(roads,Qt.ElideRight,150);painter.fillRect(box,QColor(255,255,255,225));painter.setPen(QColor("#475569"));painter.setFont(label_font);painter.drawText(box,Qt.AlignCenter,text)
+                metrics=painter.fontMetrics();text=metrics.elidedText(roads,Qt.ElideRight,150);painter.fillRect(box,label_background);painter.setPen(muted_color);painter.setFont(label_font);painter.drawText(box,Qt.AlignCenter,text)
             metric_font=QFont(painter.font());metric_font.setPointSize(8)
             for direction,offset in zip(directions,offsets):
                 origin,destination=positions[direction["from"]],positions[direction["to"]]
@@ -244,14 +245,14 @@ class NetworkDiagramWidget(QWidget):
                 if metric:
                     label_offset=-38 if offset<0 else 38;label_mid=QPointF(mid.x()+nx*label_offset,mid.y()+ny*label_offset)
                     metric_box=self._place_label_box(label_mid,224,20,occupied,label_bounds,axis,normal,-1 if offset<0 else 1);self._label_boxes.append(metric_box)
-                    painter.fillRect(metric_box,QColor(255,255,255,232));painter.setFont(metric_font);painter.setPen(QColor("#334155"));painter.drawText(metric_box,Qt.AlignCenter,painter.fontMetrics().elidedText(metric,Qt.ElideRight,218))
+                    painter.fillRect(metric_box,label_background);painter.setFont(metric_font);painter.setPen(text_color);painter.drawText(metric_box,Qt.AlignCenter,painter.fontMetrics().elidedText(metric,Qt.ElideRight,218))
         node_font=QFont(painter.font());node_font.setBold(True);node_font.setPointSize(11);name_font=QFont(painter.font());name_font.setPointSize(8)
         highlighted_nodes=set()
         for edge in self.edges:
             if self.highlight_uids&edge["uids"]:highlighted_nodes.update((edge["start"],edge["end"]))
         for key,point in positions.items():
-            node=self.nodes[key];active=key in highlighted_nodes;painter.setBrush(QColor("#FFF7E0") if active else "#EFF6FF");painter.setPen(QPen(QColor("#F59E0B") if active else QColor("#1D4ED8"),3 if active else 2));painter.drawEllipse(point,24,24)
-            label=node["number"] or node["name"][:4];painter.setFont(node_font);painter.setPen(QColor("#172033"));painter.drawText(QRectF(point.x()-22,point.y()-22,44,44),Qt.AlignCenter,label)
+            node=self.nodes[key];active=key in highlighted_nodes;painter.setBrush(QColor("#4A3A19" if dark else "#FFF7E0") if active else QColor("#263A59" if dark else "#EFF6FF"));painter.setPen(QPen(QColor("#FBBF24" if dark else "#F59E0B") if active else external_color,3 if active else 2));painter.drawEllipse(point,24,24)
+            label=node["number"] or node["name"][:4];painter.setFont(node_font);painter.setPen(text_color);painter.drawText(QRectF(point.x()-22,point.y()-22,44,44),Qt.AlignCenter,label)
             if node["name"]:
                 painter.setFont(name_font);text=painter.fontMetrics().elidedText(node["name"],Qt.ElideRight,125);painter.drawText(QRectF(point.x()-65,point.y()+28,130,20),Qt.AlignCenter,text)
     @staticmethod
@@ -361,10 +362,10 @@ def collapse_icon(color="#64748B") -> QIcon:
 class HistoryCollapseButton(QToolButton):
     def __init__(self,parent=None):
         super().__init__(parent);self.setObjectName("historyCollapseButton");self.setIconSize(QSize(18,18));self.setFixedSize(30,30);self.setIcon(collapse_icon());self.setToolTip("변경 기록 접기")
-    def enterEvent(self,event):self.setIcon(collapse_icon("#1769D2"));super().enterEvent(event)
+    def enterEvent(self,event):self.setIcon(collapse_icon("#0F3675"));super().enterEvent(event)
     def leaveEvent(self,event):self.setIcon(collapse_icon());super().leaveEvent(event)
-    def mousePressEvent(self,event):self.setIcon(collapse_icon("#155FC7"));super().mousePressEvent(event)
-    def mouseReleaseEvent(self,event):self.setIcon(collapse_icon("#1769D2") if self.rect().contains(event.position().toPoint()) else collapse_icon());super().mouseReleaseEvent(event)
+    def mousePressEvent(self,event):self.setIcon(collapse_icon("#0A2858"));super().mousePressEvent(event)
+    def mouseReleaseEvent(self,event):self.setIcon(collapse_icon("#0F3675") if self.rect().contains(event.position().toPoint()) else collapse_icon());super().mouseReleaseEvent(event)
 
 
 def blank_project(year=2026):
@@ -423,7 +424,7 @@ class ElidedLabel(QLabel):
 class DetailCellDelegate(QStyledItemDelegate):
     """행 높이와 운영체제 버튼 스타일에 영향받지 않는 상세 셀 버튼."""
 
-    RADIUS=8
+    RADIUS=9
 
     @staticmethod
     def badge_rect(rect):
@@ -431,8 +432,8 @@ class DetailCellDelegate(QStyledItemDelegate):
 
     @staticmethod
     def badge_color(modified,hovered=False):
-        if modified:return QColor("#0F2F57" if hovered else "#153A66")
-        return QColor("#1B6BD7" if hovered else "#2375E8")
+        if modified:return QColor("#061A3A" if hovered else "#0B2858")
+        return QColor("#174A92" if hovered else "#0F3675")
 
     def paint(self,painter,option,index):
         painter.save();painter.setRenderHint(QPainter.Antialiasing)
@@ -471,8 +472,8 @@ class BlankNumericDelegate(NumericDelegate):
     def __init__(self,integer,minimum,maximum,decimals=2,table=None,parent=None):super().__init__(integer,minimum,maximum,decimals,parent);self.table=table
     def createEditor(self,parent,option,index):
         editor=super().createEditor(parent,option,index)
-        editor.setStyleSheet("QLineEdit{padding:0 4px;min-height:0;border:2px solid #2375E8;border-radius:0;background:white;color:#253044;selection-background-color:#DDEBFF;selection-color:#1769D2;}")
-        palette=editor.palette();palette.setColor(QPalette.Base,QColor("white"));palette.setColor(QPalette.Text,QColor("#172033"));palette.setColor(QPalette.Highlight,QColor("#DCEBFF"));palette.setColor(QPalette.HighlightedText,QColor("#172033"));editor.setPalette(palette);editor.setAutoFillBackground(True)
+        editor.setStyleSheet("QLineEdit{padding:0 4px;min-height:0;border:2px solid #77A4ED;border-radius:0;background:white;color:#1D2939;selection-background-color:#E8F0FD;selection-color:#0F3675;}")
+        palette=editor.palette();palette.setColor(QPalette.Base,QColor("white"));palette.setColor(QPalette.Text,QColor("#1D2939"));palette.setColor(QPalette.Highlight,QColor("#E8F0FD"));palette.setColor(QPalette.HighlightedText,QColor("#0F3675"));editor.setPalette(palette);editor.setAutoFillBackground(True)
         editor.setProperty("navRow",index.row());editor.setProperty("navCol",index.column());editor.installEventFilter(self);return editor
     def eventFilter(self,obj,event):
         if event.type()==QEvent.KeyPress and event.key() in (Qt.Key_Tab,Qt.Key_Backtab,Qt.Key_Return,Qt.Key_Enter):
@@ -521,7 +522,7 @@ class FastInputTable(FrozenInputTable):
             if index.isValid() and index.column() in (12,13):
                 rect=self.visualRect(index)
                 if event.position().x()<=rect.left()+22:
-                    self.setCurrentCell(index.row(),index.column());item=self.item(index.row(),index.column());status=str(item.data(Qt.UserRole+6) or "manual");self._set_icon_without_edit(item,excel_link_icon(status,True));QTimer.singleShot(110,lambda target=item,state=status:self._set_icon_without_edit(target,excel_link_icon(state)));QTimer.singleShot(120,lambda row=index.row():self.linkRequested.emit(row));event.accept();return True
+                    self.setCurrentCell(index.row(),index.column());item=self.item(index.row(),index.column());status=str(item.data(Qt.UserRole+6) or "manual");self._set_icon_without_edit(item,excel_link_icon(status,True));QTimer.singleShot(110,lambda target=item,state=status:self._set_icon_without_edit(target,excel_link_icon(state)));self.linkRequested.emit(index.row());event.accept();return True
         if obj is self.frozen and event.type()==QEvent.KeyPress:
             self.setCurrentCell(self.frozen.currentIndex().row(),self.frozen.currentIndex().column())
             self.keyPressEvent(event); return event.isAccepted()
@@ -645,7 +646,7 @@ class OptionalColorHeader(QHeaderView):
         if logical_index not in OPTIONAL_COLUMN_COLORS:
             super().paintSection(painter,rect,logical_index);return
         painter.save();painter.fillRect(rect,QColor(OPTIONAL_COLUMN_COLORS[logical_index][0]));painter.setPen(QPen(QColor("#C5CFDB"),1));painter.drawLine(rect.topRight(),rect.bottomRight());painter.drawLine(rect.bottomLeft(),rect.bottomRight())
-        font=self.font();font.setBold(True);painter.setFont(font);painter.setPen(QColor("#253044"));text=str(self.model().headerData(logical_index,Qt.Horizontal,Qt.DisplayRole) or "");painter.drawText(rect.adjusted(4,4,-4,-4),Qt.AlignCenter|Qt.TextWordWrap,text);painter.restore()
+        font=self.font();font.setBold(True);painter.setFont(font);painter.setPen(QColor("#1D2939"));text=str(self.model().headerData(logical_index,Qt.Horizontal,Qt.DisplayRole) or "");painter.drawText(rect.adjusted(4,4,-4,-4),Qt.AlignCenter|Qt.TextWordWrap,text);painter.restore()
 
 
 class AddTabDialog(QDialog):
@@ -1394,11 +1395,22 @@ class MainWindow(QMainWindow):
         menu=self.menuBar().addMenu("프로젝트")
         for label,slot,shortcut in (("새 프로젝트",self.new,"Ctrl+N"),("열기",self.open,"Ctrl+O"),("저장",self.save,"Ctrl+S"),("다른 이름으로 저장",self.save_as,"Ctrl+Shift+S")):
             a=QAction(label,self);a.setShortcut(shortcut);a.triggered.connect(slot);menu.addAction(a)
+        view_menu=self.menuBar().addMenu("보기");self.theme_action=QAction("다크 모드",self);self.theme_action.setCheckable(True);self.theme_action.setChecked(str(QSettings("NYH","ArterialAnalysis").value("darkMode","false")).lower() in ("1","true","yes"));self.theme_action.triggered.connect(self.apply_theme);view_menu.addAction(self.theme_action)
         help_menu=self.menuBar().addMenu("도움말");guide=QAction("사용설명서",self);guide.triggered.connect(lambda:UserGuideDialog(self).exec());help_menu.addAction(guide);short=QAction("키보드 단축키",self);short.setShortcut("F1");short.triggered.connect(lambda:ShortcutDialog(self).exec());help_menu.addAction(short)
         self.updater=UpdateController(APP_VERSION,self);update_action=QAction("업데이트 확인",self);update_action.triggered.connect(lambda:self.updater.check(True));help_menu.addAction(update_action)
         about=QAction("프로그램 정보",self);about.triggered.connect(self.show_about);help_menu.addAction(about)
         if QGuiApplication.platformName().lower()!="offscreen":QTimer.singleShot(2500,lambda:self.updater.check(False))
-        QShortcut(QKeySequence("Ctrl+T"),self,activated=self.add_tab_shortcut);QShortcut(QKeySequence("Ctrl+PgDown"),self,activated=lambda:self.move_analysis_tab(1));QShortcut(QKeySequence("Ctrl+PgUp"),self,activated=lambda:self.move_analysis_tab(-1));QShortcut(QKeySequence("Ctrl+Z"),self,activated=self.undo_project);QShortcut(QKeySequence("Ctrl+Y"),self,activated=self.redo_project);QShortcut(QKeySequence("Ctrl+Shift+Z"),self,activated=self.redo_project);self.history_toggle=QPushButton("변경 기록");self.history_toggle.setObjectName("historyToggle");self.history_toggle.clicked.connect(self.toggle_history);self.statusBar().addPermanentWidget(self.history_toggle);self.history_dock.visibilityChanged.connect(lambda visible:self.history_toggle.setVisible(not visible));self.statusBar().showMessage(f"{APP_NAME} v{APP_VERSION}   ·   {APP_AUTHOR}   ·   {APP_EMAIL}");self._last_snapshot=self.snapshot();self._saved_snapshot=self._last_snapshot;self.refresh_history()
+        QShortcut(QKeySequence("Ctrl+T"),self,activated=self.add_tab_shortcut);QShortcut(QKeySequence("Ctrl+PgDown"),self,activated=lambda:self.move_analysis_tab(1));QShortcut(QKeySequence("Ctrl+PgUp"),self,activated=lambda:self.move_analysis_tab(-1));QShortcut(QKeySequence("Ctrl+Z"),self,activated=self.undo_project);QShortcut(QKeySequence("Ctrl+Y"),self,activated=self.redo_project);QShortcut(QKeySequence("Ctrl+Shift+Z"),self,activated=self.redo_project);self.history_toggle=QPushButton("변경 기록");self.history_toggle.setObjectName("historyToggle");self.history_toggle.clicked.connect(self.toggle_history);self.statusBar().addPermanentWidget(self.history_toggle);self.history_dock.visibilityChanged.connect(lambda visible:self.history_toggle.setVisible(not visible));self.statusBar().showMessage(f"{APP_NAME} v{APP_VERSION}   ·   {APP_AUTHOR}   ·   {APP_EMAIL}");self._last_snapshot=self.snapshot();self._saved_snapshot=self._last_snapshot;self.refresh_history();self.apply_theme(self.theme_action.isChecked(),False)
+    def apply_theme(self,dark,persist=True):
+        app=QApplication.instance()
+        target=DARK_STYLE if dark else FAST_STYLE
+        if app and (app.property("khcmDarkMode")!=bool(dark) or app.styleSheet()!=target):
+            apply_dark_palette(app) if dark else apply_light_palette(app);app.setStyleSheet(target)
+            app.setProperty("khcmDarkMode",bool(dark))
+            if self.workflow.results_page.project:self.workflow.results_page.show_tab(self.workflow.results_page.tabs.currentIndex())
+            if self.workflow.detail_page.project:self.workflow.detail_page.show_tab(self.workflow.detail_page.tabs.currentIndex())
+        self.setProperty("darkMode",bool(dark));self.theme_action.setChecked(bool(dark))
+        if persist:QSettings("NYH","ArterialAnalysis").setValue("darkMode",bool(dark))
     def snapshot(self):return json.dumps(self.project.to_dict(),ensure_ascii=False,sort_keys=True,default=str)
     def setup_history_panel(self):
         self.history_dock=QDockWidget("변경 기록",self);self.history_dock.setObjectName("historyDock");self.history_dock.setAllowedAreas(Qt.RightDockWidgetArea);self.history_dock.setFeatures(QDockWidget.NoDockWidgetFeatures);self.history_dock.setTitleBarWidget(QWidget())
@@ -1414,8 +1426,8 @@ class MainWindow(QMainWindow):
         if kind=="error":body=f'<span style="color:#DC2626;font-weight:700">Excel 연결 오류</span> · {html.escape(str(entry.get("message","")))}'
         elif kind in ("undo","redo"):body=f'<span style="color:#15803D;font-weight:700">{"되돌림" if kind=="undo" else "다시 실행"}</span>'
         else:
-            field=html.escape(str(entry.get("field","") or "변경"));old=html.escape(str(entry.get("old","") if entry.get("old") is not None else "빈칸"));new=html.escape(str(entry.get("new","") if entry.get("new") is not None else "빈칸"));body=f'{field} <span style="color:#1769D2;font-weight:700">{old} → {new}</span>'
-        segment_html=f'<a href="uid:{uid}" style="color:#1769D2;text-decoration:none;font-weight:700">{segment}</a> · ' if segment else ""
+            field=html.escape(str(entry.get("field","") or "변경"));old=html.escape(str(entry.get("old","") if entry.get("old") is not None else "빈칸"));new=html.escape(str(entry.get("new","") if entry.get("new") is not None else "빈칸"));body=f'{field} <span style="color:#0F3675;font-weight:700">{old} → {new}</span>'
+        segment_html=f'<a href="uid:{uid}" style="color:#0F3675;text-decoration:none;font-weight:700">{segment}</a> · ' if segment else ""
         return f'<div style="margin:0 0 9px 0;color:#111827"><span>{stamp} · {html.escape(tab)} · </span>{segment_html}{body}</div>'
     def refresh_history(self):self.history_view.setHtml("".join(self.history_html(entry) for entry in reversed(self.project.change_log)) or '<span style="color:#64748B">기록된 변경사항이 없습니다.</span>')
     def history_link(self,url):
@@ -1509,13 +1521,13 @@ class MainWindow(QMainWindow):
 
 
 FAST_STYLE=STYLE+"""
-QFrame#inputTitleBand{background:#FFFFFF;border:0;border-bottom:1px solid #D7E0EA}
+QFrame#inputTitleBand{background:#FFFFFF;border:0;border-bottom:1px solid #EAECF0}
 QFrame#inputContent{background:#FFFFFF;border:0}
-QFrame#analysisSheet{background:#F1F4F8;border:1px solid #D7E0EA;border-top-left-radius:0;border-top-right-radius:9px;border-bottom-left-radius:9px;border-bottom-right-radius:9px}
+QFrame#analysisSheet{background:#EEF2F7;border:1px solid #D8E1EE;border-top-left-radius:0;border-top-right-radius:10px;border-bottom-left-radius:10px;border-bottom-right-radius:10px}
 QComboBox#cellComboEditor{padding:0 18px 0 3px;min-height:0;border-radius:0}
-QComboBox#cellComboEditor::drop-down{width:16px;border-left:1px solid #D8E0E9;border-radius:0;background:#F7FAFC}
+QComboBox#cellComboEditor::drop-down{width:16px;border-left:1px solid #D0D5DD;border-radius:0;background:#F7F9FC}
 QComboBox#cellComboEditor::down-arrow{width:9px;height:6px}
-QComboBox#cellComboEditor QLineEdit{padding:0 2px;min-height:0;border:0;border-radius:0;background:transparent;color:#253044}
+QComboBox#cellComboEditor QLineEdit{padding:0 2px;min-height:0;border:0;border-radius:0;background:transparent;color:#1D2939}
 QLabel#formulaPrefix{background:#107C41;color:#FFFFFF;border:1px solid #0B6535;border-radius:6px;font-size:10pt;font-weight:800;padding:4px 0}
 QLineEdit#formulaBar,QLineEdit#excelFormula{background:#EAF5EE;border:1px solid #8CC6A3;border-radius:6px;padding:5px 8px;color:#153B26;min-height:18px;selection-background-color:#B9DFC7;selection-color:#153B26}
 QLineEdit#formulaBar:focus,QLineEdit#excelFormula:focus{background:#F3FAF5;border:2px solid #107C41;padding:4px 7px}
@@ -1528,18 +1540,14 @@ QPushButton#excelButton:pressed{background:#CDE9D7;border-color:#107C41}
 QPushButton#excelPrimaryButton{background:#107C41;color:#FFFFFF;border:1px solid #107C41}
 QPushButton#excelPrimaryButton:hover{background:#0D6F3A;border-color:#0D6F3A}
 QPushButton#excelPrimaryButton:pressed{background:#095C30;border-color:#095C30}
-QLabel#shortcutBar{background:#172033;color:white;border-radius:6px;padding:5px 8px;font-size:8pt}
+QLabel#shortcutBar{background:#0B1F44;color:#FFFFFF;border-radius:7px;padding:6px 9px;font-size:8pt}
 QLabel#compareBar{background:#E8F5E9;color:#176B3A;border:1px solid #8AC9A4;border-radius:7px;padding:6px 9px}
 QLabel#linkWarning{background:#FFF3CD;color:#7A4B00;border:1px solid #F4C95D;border-radius:7px;padding:7px 10px;font-weight:700}
-QLineEdit#tabMemo{background:#FFFFFF;border:1px solid #D7DEE9;border-radius:7px;padding:5px 8px;color:#253044}
-QPushButton{background:white;border:1px solid #DDE3EC;border-radius:8px;padding:6px 10px;font-weight:700;color:#253044}
-QPushButton:hover{background:#F0F5FF;border-color:#8CB9F5}
-QPushButton:pressed{background:#DCEAFF;border-color:#2375E8}
-QPushButton:focus{border:2px solid #2375E8}
-QPushButton#primaryButton{background:#2375E8;color:white;border-color:#2375E8}
-QPushButton#primaryButton:hover{background:#1B6BD7;border-color:#1B6BD7}
-QPushButton#primaryButton:pressed{background:#155FC7;border-color:#155FC7;color:white}
-QPushButton#reviewButton{padding:4px 7px}
+QLineEdit#tabMemo{background:#FFFFFF;border:1px solid #D0D5DD;border-radius:7px;padding:5px 8px;color:#1D2939}
+QPushButton#primaryButton{background:#0F3675;color:#FFFFFF;border-color:#0F3675}
+QPushButton#primaryButton:hover{background:#174A92;border-color:#174A92}
+QPushButton#primaryButton:pressed{background:#0A2858;border-color:#0A2858;color:#FFFFFF}
+QPushButton#reviewButton{padding:3px 7px}
 QPushButton#reviewButton:pressed{background:#FFE4AF;border-color:#D97706;color:#7A3900}
 QToolButton#tabCloseButton:pressed{background:#FBCACA;color:#9F1239}
 QToolButton#historyTrashButton{background:transparent;border:1px solid transparent;border-radius:9px;padding:5px}
@@ -1548,15 +1556,34 @@ QToolButton#historyTrashButton:pressed{background:#FEE2E2;border-color:#EF4444}
 QToolButton#historyCollapseButton{background:transparent;border:1px solid transparent;border-radius:9px;padding:5px}
 QToolButton#historyCollapseButton:hover{background:#EFF6FF;border-color:#BFDBFE}
 QToolButton#historyCollapseButton:pressed{background:#DBEAFE;border-color:#60A5FA}
-QDockWidget#historyDock{background:#FFFFFF;color:#172033;border:1px solid #DCE3ED}
-QDockWidget#historyDock::title{background:#F7F9FC;padding:8px;border-bottom:1px solid #DCE3ED}
-QPushButton#historyToggle{padding:4px 10px;border-radius:8px;background:#EFF6FF;color:#1769D2;border:1px solid #B8D3F8}
-QPushButton:disabled{background:#E9EDF2;color:#A4ACB8;border-color:#E9EDF2}
+QDockWidget#historyDock{background:#FFFFFF;color:#101828;border:1px solid #D8E1EE}
+QDockWidget#historyDock::title{background:#F7F9FC;padding:8px;border-bottom:1px solid #D8E1EE}
+QPushButton#historyToggle{padding:4px 10px;border-radius:8px;background:#E8F0FD;color:#0F3675;border:1px solid #B8C9E3}
+QPushButton:disabled{background:#EAECF0;color:#98A2B3;border-color:#EAECF0}
+"""
+DARK_STYLE=FAST_STYLE+"""
+QWidget{color:#F2F4F7} QMainWindow,QStackedWidget{background:#151A23}
+QDialog,QMessageBox,QFileDialog{background:#151A23;color:#F2F4F7} QDialog QLabel,QMessageBox QLabel,QFileDialog QLabel{color:#F2F4F7} QTextEdit,QTextBrowser{background:#1E2633;color:#F2F4F7;border-color:#344054}
+QMenuBar{background:#1A212C;color:#F2F4F7} QMenuBar::item{color:#F2F4F7} QMenuBar::item:selected{background:#263A59;color:#B9D2FA} QMenu{background:#1E2633;color:#F2F4F7;border-color:#344054} QMenu::item{color:#F2F4F7} QMenu::item:selected{background:#263A59;color:#B9D2FA}
+QTabWidget::pane{background:#1E2633;border-color:#344054} QTabBar::tab{background:#202938;color:#AAB4C3;border-bottom-color:#344054} QTabBar::tab:hover{background:#29364A;color:#B9D2FA} QTabBar::tab:selected{background:#1E2633;color:#B9D2FA;border-color:#50647F;border-bottom-color:#1E2633} QTabBar#sheetTabs::tab:selected{background:#252F3D;border-bottom-color:#252F3D} QTabBar#contentTabBar::tab:selected{background:#1E2633;border-bottom-color:#1E2633} QTabBar#mainTabBar::tab:selected{background:#151A23;border-bottom-color:#151A23}
+QFrame#card,QFrame#tabContentCard,QFrame#inputTitleBand,QFrame#inputContent{background:#1E2633} QFrame#inputTitleBand{border-bottom-color:#344054} QFrame#tabSheetPanel,QFrame#analysisSheet{background:#252F3D;border-color:#344054} QLabel#cardTitle{color:#F8FAFC} QLabel#pageTitle{color:#F8FAFC} QLabel#stepBar{background:#1E2633;color:#B0BAC8;border-bottom-color:#344054} QLabel#resultHero{background:#203759;border-color:#77A4ED;color:#D7E7FF} QLabel#copyNote{color:#B0BAC8}
+QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox{background:#202938;color:#F2F4F7;border-color:#475467} QLineEdit:hover,QSpinBox:hover,QDoubleSpinBox:hover,QComboBox:hover{border-color:#77A4ED} QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus,QComboBox:focus{background:#202938;border-color:#77A4ED} QComboBox::drop-down{background:#293342;border-left-color:#475467} QComboBox::drop-down:hover{background:#31415A} QComboBox QAbstractItemView{background:#202938;color:#F2F4F7;border-color:#77A4ED;selection-background-color:#314E78;selection-color:#FFFFFF}
+QPushButton{background:#252F3D;color:#E4E7EC;border-color:#475467} QPushButton:hover{background:#2B3F5F;color:#D7E7FF;border-color:#77A4ED} QPushButton:pressed{background:#203759;border-color:#77A4ED} QPushButton#primaryButton{background:#77A4ED;color:#0B1F44;border-color:#77A4ED} QPushButton#primaryButton:hover{background:#98BCF4;border-color:#98BCF4} QPushButton#primaryButton:pressed{background:#5F8EDB;border-color:#5F8EDB}
+QTableWidget{background:#1E2633;alternate-background-color:#202938;color:#F2F4F7;border-color:#344054;gridline-color:#344054;selection-background-color:#314E78;selection-color:#FFFFFF} QTableWidget::item{border-bottom-color:#344054} QTableWidget::item:hover{background:#293A54} QTableView#frozenColumnsView{background:#1E2633;alternate-background-color:#202938;color:#F2F4F7;border-right-color:#77A4ED;gridline-color:#344054;selection-background-color:#314E78;selection-color:#FFFFFF} QHeaderView::section{background:#293342;color:#F2F4F7;border-right-color:#3D4A5C;border-bottom-color:#475467}
+QScrollBar:horizontal,QScrollBar:vertical{background:#202938} QScrollBar::handle:horizontal,QScrollBar::handle:vertical{background:#5F6F82} QScrollBar::handle:horizontal:hover,QScrollBar::handle:vertical:hover{background:#77A4ED} QStatusBar{background:#1A212C;color:#B0BAC8;border-top-color:#344054}
+QLabel#shortcutBar{background:#0A2858;color:#FFFFFF} QLineEdit#tabMemo{background:#202938;color:#F2F4F7;border-color:#475467} QDockWidget#historyDock{background:#1E2633;color:#F2F4F7;border-color:#344054} QDockWidget#historyDock::title{background:#252F3D;border-bottom-color:#344054} QPushButton#historyToggle{background:#263A59;color:#B9D2FA;border-color:#50647F}
 """
 def apply_light_palette(app):
     p=QPalette()
-    for role,color in ((QPalette.Window,"#F5F7FA"),(QPalette.WindowText,"#253044"),(QPalette.Base,"#FFFFFF"),(QPalette.Text,"#253044"),(QPalette.Button,"#FFFFFF"),(QPalette.ButtonText,"#253044"),(QPalette.Highlight,"#DDEBFF"),(QPalette.HighlightedText,"#1769D2"),(QPalette.ToolTipBase,"#FFFFFF"),(QPalette.ToolTipText,"#253044")):p.setColor(role,QColor(color))
+    for role,color in ((QPalette.Window,"#F2F2F2"),(QPalette.WindowText,"#1D2939"),(QPalette.Base,"#FFFFFF"),(QPalette.AlternateBase,"#FAFBFC"),(QPalette.Text,"#1D2939"),(QPalette.Button,"#FFFFFF"),(QPalette.ButtonText,"#344054"),(QPalette.Highlight,"#E8F0FD"),(QPalette.HighlightedText,"#0F3675"),(QPalette.ToolTipBase,"#FFFFFF"),(QPalette.ToolTipText,"#1D2939")):p.setColor(role,QColor(color))
+    p.setColor(QPalette.Disabled,QPalette.Text,QColor("#98A2B3"));p.setColor(QPalette.Disabled,QPalette.ButtonText,QColor("#98A2B3"))
     app.setPalette(p)
+
+
+def apply_dark_palette(app):
+    p=QPalette()
+    for role,color in ((QPalette.Window,"#151A23"),(QPalette.WindowText,"#F2F4F7"),(QPalette.Base,"#1E2633"),(QPalette.AlternateBase,"#202938"),(QPalette.Text,"#F2F4F7"),(QPalette.Button,"#252F3D"),(QPalette.ButtonText,"#E4E7EC"),(QPalette.Highlight,"#314E78"),(QPalette.HighlightedText,"#FFFFFF"),(QPalette.ToolTipBase,"#252F3D"),(QPalette.ToolTipText,"#F2F4F7")):p.setColor(role,QColor(color))
+    p.setColor(QPalette.Disabled,QPalette.Text,QColor("#7F8A99"));p.setColor(QPalette.Disabled,QPalette.ButtonText,QColor("#7F8A99"));app.setPalette(p)
 
 
 def enable_native_file_dialogs():

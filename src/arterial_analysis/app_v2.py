@@ -77,10 +77,28 @@ def resource_path(relative: str) -> str:
     return str(base / relative)
 
 
+_FONTS_LOADED = False
+
+
 def load_font() -> None:
-    path = resource_path("assets/NotoSansKR.ttf")
-    if Path(path).exists():
-        QFontDatabase.addApplicationFont(path)
+    global _FONTS_LOADED
+    if _FONTS_LOADED:
+        return
+    paths = [
+        resource_path("assets/NanumSquareL.ttf"),
+        resource_path("assets/NanumSquareR.ttf"),
+        resource_path("assets/NanumSquareB.ttf"),
+        resource_path("assets/NanumSquareEB.ttf"),
+    ]
+    loaded = False
+    for path in paths:
+        if Path(path).exists():
+            loaded = QFontDatabase.addApplicationFont(path) >= 0 or loaded
+    if not loaded:
+        fallback = resource_path("assets/NotoSansKR.ttf")
+        if Path(fallback).exists():
+            QFontDatabase.addApplicationFont(fallback)
+    _FONTS_LOADED = True
 
 
 def make_card(title: str, child: QWidget) -> QFrame:
@@ -148,7 +166,7 @@ class CenterCheckDelegate(QStyledItemDelegate):
         state=index.data(Qt.CheckStateRole); checked=state in (Qt.Checked,Qt.CheckState.Checked,2); size=18
         rect=QRect(option.rect.center().x()-size//2,option.rect.center().y()-size//2,size,size)
         painter.save(); painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(QPen(QColor("#9AA9BC"),1.4)); painter.setBrush(QColor("#2375E8") if checked else QColor("#FFFFFF")); painter.drawRoundedRect(rect,4,4)
+        painter.setPen(QPen(QColor("#8FA0B5"),1.4)); painter.setBrush(QColor("#0F3675") if checked else QColor("#FFFFFF")); painter.drawRoundedRect(rect,4,4)
         if checked:
             painter.setPen(QPen(QColor("#FFFFFF"),3.0,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin)); painter.drawLine(rect.left()+4,rect.center().y(),rect.left()+8,rect.bottom()-4); painter.drawLine(rect.left()+8,rect.bottom()-4,rect.right()-3,rect.top()+4)
         painter.restore()
@@ -183,7 +201,7 @@ class FrozenInputTable(QTableWidget):
     def __init__(self,rows,columns,freeze_count=7,parent=None):
         super().__init__(rows,columns,parent); self.freeze_count=freeze_count; self.frozen=FrozenColumnsView(freeze_count,self); self.frozen.setModel(self.model()); self.frozen.setSelectionModel(self.selectionModel())
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn); self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel); self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.frozen.setFrameShape(QFrame.NoFrame); self.frozen.setStyleSheet("QTableView{border:0;border-right:2px solid #AEB9C8;background:white;}")
+        self.frozen.setObjectName("frozenColumnsView"); self.frozen.setFrameShape(QFrame.NoFrame)
         self.frozen.verticalHeader().hide(); self.frozen.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.frozen.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff); self.frozen.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel); self.frozen.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel); self.frozen.setEditTriggers(QAbstractItemView.AllEditTriggers)
         for col in range(columns): self.frozen.setColumnHidden(col,col>=freeze_count)
         self.frozen.show(); self.frozen.raise_(); self.verticalScrollBar().valueChanged.connect(self.frozen.verticalScrollBar().setValue); self.frozen.verticalScrollBar().valueChanged.connect(self.verticalScrollBar().setValue); self.frozen.horizontalScrollBar().valueChanged.connect(self._lock_frozen_horizontal); self.horizontalScrollBar().valueChanged.connect(self._lock_frozen_horizontal); self.horizontalHeader().sectionResized.connect(self._sync_width)
@@ -334,6 +352,8 @@ class EditableTabBar(QTabBar):
             text_rect, close_rect = self._content_rects(index)
             font = painter.font();font.setBold(index == self.currentIndex());painter.setFont(font)
             color = self.tabTextColor(index)
+            if QApplication.palette().color(QPalette.Window).lightness() < 128 and color.isValid():
+                color = color.lighter(175)
             painter.setPen(color if color.isValid() else option.palette.color(option.palette.ButtonText))
             tight = painter.fontMetrics().tightBoundingRect(self.tabText(index))
             baseline = self.tabRect(index).center().y() - tight.center().y()
@@ -799,6 +819,7 @@ def detail_spec(results: list[AnalysisResult], key: tuple[str, int]) -> ReportSp
 
 def populate_spec(table: CopyableTable, spec: ReportSpec) -> None:
     columns = len(spec.headers); table.clear(); table.setColumnCount(columns); table.setRowCount(2)
+    dark=table.palette().color(QPalette.Window).lightness()<128
     table.horizontalHeader().setVisible(False); table.setEditTriggers(QAbstractItemView.NoEditTriggers); table.clearSpans(); table.setAlternatingRowColors(False)
     column = 0
     for group, headers in spec.groups:
@@ -814,25 +835,25 @@ def populate_spec(table: CopyableTable, spec: ReportSpec) -> None:
         category=spec.row_categories[data_index] if data_index<len(spec.row_categories) else ""
         category_group=("내부도로" if category==INTERNAL else "외부도로") if category else ""
         if category_group and category_group!=last_category:
-            vr=table.rowCount(); table.insertRow(vr); table.setRowHeight(vr,24); table.setSpan(vr,0,1,columns); section=QTableWidgetItem("■ "+category_group); section.setTextAlignment(Qt.AlignLeft|Qt.AlignVCenter); section.setBackground(QColor("#DCE7F5")); section.setForeground(QColor("#1E3A5F")); table.setItem(vr,0,section); last_category=category_group
+            vr=table.rowCount(); table.insertRow(vr); table.setRowHeight(vr,24); table.setSpan(vr,0,1,columns); section=QTableWidgetItem("■ "+category_group); section.setTextAlignment(Qt.AlignLeft|Qt.AlignVCenter); section.setBackground(QColor("#263A59" if dark else "#DCE7F5")); section.setForeground(QColor("#B9D2FA" if dark else "#1E3A5F")); table.setItem(vr,0,section); last_category=category_group
         pair_id=spec.row_pair_ids[data_index] if data_index<len(spec.row_pair_ids) else f"row-{data_index}"
         if pair_id!=last_pair:pair_band+=1;last_pair=pair_id
-        row_background=QColor("#FFFFFF" if pair_band%2==0 else "#F8FAFD")
+        row_background=QColor(("#1E2633" if pair_band%2==0 else "#202938") if dark else ("#FFFFFF" if pair_band%2==0 else "#F8FAFD"))
         row_index=table.rowCount(); table.insertRow(row_index); table.setRowHeight(row_index,25); visual_rows.append((data_index,row_index))
         for col, value in enumerate(row):
             text = str(value)
             numeric = bool(re.fullmatch(r"[+-]?[\d,]+(?:\.\d+)?%?", text))
             segment_column=col<6
             item = QTableWidgetItem(text); item.setTextAlignment((Qt.AlignCenter if segment_column or not numeric else Qt.AlignRight) | Qt.AlignVCenter); item.setBackground(row_background); table.setItem(row_index, col, item)
-            if (data_index,col) in spec.highlight_cells: item.setForeground(QColor("#D7191C")); item.setBackground(QColor("#FFF0F0")); item.setFont(table.font()); item.setToolTip("수동조정값")
+            if (data_index,col) in spec.highlight_cells: item.setForeground(QColor("#FFB4AB" if dark else "#D7191C")); item.setBackground(QColor("#5A2525" if dark else "#FFF0F0")); item.setFont(table.font()); item.setToolTip("수동조정값")
         if spec.row_uids and data_index<len(spec.row_uids): table.item(row_index,0).setData(Qt.UserRole,spec.row_uids[data_index])
         if spec.row_warnings and data_index<len(spec.row_warnings) and spec.row_warnings[data_index]:
             for col in range(columns):
-                if table.item(row_index,col): table.item(row_index,col).setBackground(QColor("#FFF1D6")); table.item(row_index,col).setToolTip(spec.row_warnings[data_index])
+                if table.item(row_index,col): table.item(row_index,col).setBackground(QColor("#59430F" if dark else "#FFF1D6")); table.item(row_index,col).setToolTip(spec.row_warnings[data_index])
         if spec.row_details and data_index<len(spec.row_details):
-            detail_row=table.rowCount(); table.insertRow(detail_row); table.setSpan(detail_row,0,1,columns); detail_text=(spec.row_warnings[data_index]+" · " if data_index<len(spec.row_warnings) and spec.row_warnings[data_index] else "")+spec.row_details[data_index]; detail_item=QTableWidgetItem(""); detail_item.setData(Qt.UserRole,detail_text); detail_item.setBackground(QColor("#F7FAFC")); detail_item.setForeground(QColor("#475569")); table.setItem(detail_row,0,detail_item); table.setRowHidden(detail_row,True)
+            detail_row=table.rowCount(); table.insertRow(detail_row); table.setSpan(detail_row,0,1,columns); detail_text=(spec.row_warnings[data_index]+" · " if data_index<len(spec.row_warnings) and spec.row_warnings[data_index] else "")+spec.row_details[data_index]; detail_item=QTableWidgetItem(""); detail_item.setData(Qt.UserRole,detail_text); detail_item.setBackground(QColor("#202938" if dark else "#F7FAFC")); detail_item.setForeground(QColor("#B0BAC8" if dark else "#475569")); table.setItem(detail_row,0,detail_item); table.setRowHidden(detail_row,True)
             collapsed_text="검토 ▼" if not (data_index<len(spec.row_warnings) and spec.row_warnings[data_index]) else "확인 필요 ▼"
-            button=QPushButton(collapsed_text); button.setObjectName("reviewButton"); button.setProperty("collapsedText",collapsed_text); button.setMinimumHeight(max(24,button.fontMetrics().height()+10)); button.setMinimumWidth(button.fontMetrics().horizontalAdvance(collapsed_text)+22); button.clicked.connect(lambda _=False,r=detail_row,b=button:self_toggle_detail(table,r,b)); table.setCellWidget(row_index,columns-1,button); table.setRowHeight(row_index,max(27,button.minimumHeight()+3))
+            button=QPushButton(collapsed_text); button.setObjectName("reviewButton"); button.setProperty("collapsedText",collapsed_text); button.setMinimumHeight(max(23,button.fontMetrics().height()+10)); button.setMinimumWidth(button.fontMetrics().horizontalAdvance(collapsed_text)+18); button.clicked.connect(lambda _=False,r=detail_row,b=button:self_toggle_detail(table,r,b)); table.setCellWidget(row_index,columns-1,button); table.setRowHeight(row_index,max(26,button.minimumHeight()+3))
     # 양방향 한 쌍의 공통 구간정보는 세로 병합하고 방향만 분리한다.
     if not spec.row_details:
         start=0
@@ -1133,25 +1154,25 @@ class MainWindow(QMainWindow):
 
 COMBO_ARROW=resource_path("assets/combo-chevron.svg").replace("\\","/")
 STYLE="""
-QWidget{font-family:"Noto Sans KR","Malgun Gothic";font-size:9pt;color:#253044} QMainWindow,QStackedWidget{background:#F5F7FA}
-QDialog,QMessageBox,QFileDialog{background:#F5F7FA;color:#172033} QDialog QLabel,QMessageBox QLabel,QFileDialog QLabel{color:#172033;background:transparent} QTextEdit{background:white;color:#172033;border:1px solid #CBD6E4;border-radius:7px;padding:6px}
-QMenuBar{background:white;color:#253044;padding:3px 7px} QMenuBar::item{background:transparent;color:#253044;padding:5px 9px} QMenuBar::item:selected{background:#F0F5FF;color:#1769D2;border-radius:5px} QMenu{background:white;color:#253044;border:1px solid #DDE3EC;padding:4px} QMenu::item{background:transparent;color:#253044;padding:6px 25px 6px 9px;border-radius:4px} QMenu::item:selected{background:#F0F5FF;color:#1769D2}
-QTabWidget::pane{background:#FFFFFF;border:1px solid #D7E0EA;border-top-left-radius:0;border-top-right-radius:9px;border-bottom-left-radius:9px;border-bottom-right-radius:9px;top:-1px} QTabBar{background:transparent;border:0} QTabBar::tear{width:0;height:0} QTabBar::tab{background:#F2F5F9;padding:7px 10px;margin-right:3px;color:#657087;border:1px solid #D8E1EC;border-bottom:1px solid #D7E0EA;border-top-left-radius:8px;border-top-right-radius:8px;min-height:22px} QTabBar::tab:hover{background:#EAF1FA;border-color:#AFC5E2} QTabBar::tab:selected{background:#FFFFFF;color:#1769D2;font-weight:700;border-color:#AFC1DA;border-bottom-color:#FFFFFF;margin-bottom:-1px} QTabBar#sheetTabs::tab:selected{background:#F1F4F8;border-bottom-color:#F1F4F8} QTabBar#contentTabBar::tab:selected{background:#FFFFFF;border-bottom-color:#FFFFFF} QTabBar#mainTabBar::tab:selected{background:#F5F7FA;border-bottom-color:#F5F7FA} QToolButton#tabCloseButton{background:transparent;border:0;padding:0;margin:0 2px} QToolButton#tabCloseButton:hover{background:#FEECEC;border-radius:7px}
-QFrame#card{background:white;border:1px solid #E0E6EE;border-radius:10px} QFrame#tabContentCard{background:#FFFFFF;border:0;border-radius:0} QFrame#tabSheetPanel{background:#F1F4F8;border:1px solid #D7E0EA;border-top-left-radius:0;border-top-right-radius:9px;border-bottom-left-radius:9px;border-bottom-right-radius:9px} QLabel#cardTitle{font-size:11pt;font-weight:800;color:#172033} QLabel#pageTitle{font-size:16pt;font-weight:800;color:#172033;padding:2px 0 3px} QLabel#infoBar{background:#FFF8E6;color:#8A5A00;border-radius:7px;padding:7px 10px} QLabel#changeNotice{background:#FFE8D5;color:#9A3E00;border:1px solid #FFB779;border-radius:7px;padding:7px 10px} QLabel#copyNote{color:#526079;padding:3px}
-QLabel#stepBar{background:white;color:#64748B;padding:10px 16px;border-bottom:1px solid #E7EBF0} QLabel#resultHero{background:#EAF2FF;border:1px solid #2375E8;border-radius:13px;color:#1769D2;font-size:12pt;font-weight:800;padding:12px 16px}
-QLabel#saveNotice{background:#FFF7D6;color:#8A5800;border:1px solid #F2D681;border-radius:8px;padding:7px 11px}
-QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox{background:white;color:#253044;border:1px solid #CFD7E3;border-radius:6px;padding:4px 27px 4px 7px;min-height:18px} QLineEdit{padding-right:7px} QSpinBox,QDoubleSpinBox{padding-right:7px} QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus,QComboBox:focus{border:2px solid #2375E8;background:white} QComboBox::drop-down{subcontrol-origin:padding;subcontrol-position:top right;width:25px;border-left:1px solid #D8E0E9;border-top-right-radius:6px;border-bottom-right-radius:6px;background:#F7FAFC} QComboBox::drop-down:hover{background:#EAF2FF} QComboBox::down-arrow{image:url("__COMBO_ARROW__");width:11px;height:7px} QComboBox QAbstractItemView{background:white;color:#253044;border:1px solid #9FB2C8;selection-background-color:#DDEBFF;selection-color:#1769D2;outline:0;padding:2px} QSpinBox::up-button,QSpinBox::down-button,QDoubleSpinBox::up-button,QDoubleSpinBox::down-button{width:0;height:0;border:0}
-QPushButton{background:white;border:1px solid #DDE3EC;border-radius:8px;padding:6px 10px;font-weight:700} QPushButton:hover{background:#F0F5FF;border-color:#8CB9F5} QPushButton:pressed{background:#DCEAFF;border-color:#2375E8} QPushButton:focus{border:2px solid #2375E8} QPushButton#primaryButton{background:#2375E8;color:white;border-color:#2375E8;padding:7px 15px}
-QPushButton#detailButton{background:#2375E8;color:white;border-color:#2375E8;padding:4px 7px} QPushButton#reviewButton{background:#FFF4DD;color:#9A4D00;border-color:#F2B96D;padding:3px 6px}
-QTableWidget{background:white;alternate-background-color:#F8FAFD;border:1px solid #D8E0EA;border-radius:8px;gridline-color:#D8E0EA;selection-background-color:#DDEBFF;selection-color:#1769D2} QTableWidget::item{border-bottom:1px solid #E1E6ED;padding:4px;font-weight:600} QHeaderView::section{background:#E9EEF5;color:#253044;border:0;border-right:1px solid #CED7E2;border-bottom:1px solid #C7D1DE;padding:5px 4px;font-weight:800;text-align:center}
-QScrollBar:horizontal{background:#EEF2F6;height:12px;margin:0;border:0;border-radius:6px} QScrollBar::handle:horizontal{background:#9EACBC;min-width:43px;border-radius:6px;margin:2px} QScrollBar::handle:horizontal:hover{background:#6F8298} QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;border:0;background:transparent} QScrollBar::add-page:horizontal,QScrollBar::sub-page:horizontal{background:transparent}
-QScrollBar:vertical{background:#EEF2F6;width:12px;margin:0;border:0;border-radius:6px} QScrollBar::handle:vertical{background:#9EACBC;min-height:34px;border-radius:6px;margin:2px} QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;border:0;background:transparent} QStatusBar{background:white;color:#536273}
+QWidget{font-family:"NanumSquare","NanumSquareOTF","Malgun Gothic";font-size:9pt;color:#1D2939} QMainWindow,QStackedWidget{background:#F2F2F2}
+QDialog,QMessageBox,QFileDialog{background:#F2F2F2;color:#101828} QDialog QLabel,QMessageBox QLabel,QFileDialog QLabel{color:#101828;background:transparent} QTextEdit,QTextBrowser{background:#FFFFFF;color:#1D2939;border:1px solid #D0D5DD;border-radius:8px;padding:8px}
+QMenuBar{background:#FFFFFF;color:#1D2939;padding:4px 8px} QMenuBar::item{background:transparent;color:#1D2939;padding:6px 10px;border-radius:6px} QMenuBar::item:selected{background:#EDF3FC;color:#0F3675} QMenu{background:#FFFFFF;color:#1D2939;border:1px solid #D0D5DD;padding:4px;border-radius:8px} QMenu::item{background:transparent;color:#1D2939;padding:7px 28px 7px 10px;border-radius:6px} QMenu::item:selected{background:#E8F0FD;color:#0F3675}
+QTabWidget::pane{background:#FFFFFF;border:1px solid #D8E1EE;border-top-left-radius:0;border-top-right-radius:10px;border-bottom-left-radius:10px;border-bottom-right-radius:10px;top:-1px} QTabBar{background:transparent;border:0} QTabBar::tear{width:0;height:0} QTabBar::tab{background:#EEF1F5;padding:7px 12px;margin-right:4px;color:#667085;border:1px solid transparent;border-bottom:1px solid #D8E1EE;border-top-left-radius:8px;border-top-right-radius:8px;min-height:22px} QTabBar::tab:hover{background:#E5ECF7;color:#0F3675} QTabBar::tab:selected{background:#FFFFFF;color:#0F3675;font-weight:700;border-color:#B8C9E3;border-bottom-color:#FFFFFF;margin-bottom:-1px} QTabBar#sheetTabs::tab:selected{background:#EEF2F7;border-bottom-color:#EEF2F7} QTabBar#contentTabBar::tab:selected{background:#FFFFFF;border-bottom-color:#FFFFFF} QTabBar#mainTabBar::tab:selected{background:#F2F2F2;border-bottom-color:#F2F2F2} QToolButton#tabCloseButton{background:transparent;border:0;padding:0;margin:0 2px;border-radius:7px} QToolButton#tabCloseButton:hover{background:#FEECEC}
+QFrame#card{background:#FFFFFF;border:0;border-radius:12px} QFrame#tabContentCard{background:#FFFFFF;border:0;border-radius:0} QFrame#tabSheetPanel{background:#EEF2F7;border:1px solid #D8E1EE;border-top-left-radius:0;border-top-right-radius:10px;border-bottom-left-radius:10px;border-bottom-right-radius:10px} QLabel#cardTitle{font-size:11pt;font-weight:700;color:#101828} QLabel#pageTitle{font-size:16pt;font-weight:800;color:#0B1F44;padding:4px 0} QLabel#infoBar{background:#FFF7E6;color:#7A4B00;border-radius:8px;padding:8px 12px} QLabel#changeNotice{background:#FFF0E5;color:#8F3B00;border:1px solid #F7B27A;border-radius:8px;padding:8px 12px} QLabel#copyNote{color:#667085;padding:4px}
+QLabel#stepBar{background:#FFFFFF;color:#667085;padding:10px 16px;border-bottom:1px solid #EAECF0} QLabel#resultHero{background:#E8F0FD;border:1px solid #77A4ED;border-radius:12px;color:#0F3675;font-size:12pt;font-weight:800;padding:12px 16px}
+QLabel#saveNotice{background:#FFF7D6;color:#7A4B00;border:1px solid #F2D681;border-radius:8px;padding:8px 12px}
+QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox{background:#FFFFFF;color:#1D2939;border:1px solid #D0D5DD;border-radius:7px;padding:5px 28px 5px 8px;min-height:18px} QLineEdit{padding-right:8px} QSpinBox,QDoubleSpinBox{padding-right:8px} QLineEdit:hover,QSpinBox:hover,QDoubleSpinBox:hover,QComboBox:hover{border-color:#98A9C3} QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus,QComboBox:focus{border:2px solid #77A4ED;background:#FFFFFF} QComboBox::drop-down{subcontrol-origin:padding;subcontrol-position:top right;width:26px;border-left:1px solid #D0D5DD;border-top-right-radius:7px;border-bottom-right-radius:7px;background:#F7F9FC} QComboBox::drop-down:hover{background:#E8F0FD} QComboBox::down-arrow{image:url("__COMBO_ARROW__");width:11px;height:7px} QComboBox QAbstractItemView{background:#FFFFFF;color:#1D2939;border:1px solid #77A4ED;selection-background-color:#E8F0FD;selection-color:#0F3675;outline:0;padding:3px} QSpinBox::up-button,QSpinBox::down-button,QDoubleSpinBox::up-button,QDoubleSpinBox::down-button{width:0;height:0;border:0}
+QPushButton{background:#FFFFFF;border:1px solid #D0D5DD;border-radius:8px;padding:6px 11px;font-weight:700;color:#344054} QPushButton:hover{background:#EDF3FC;border-color:#77A4ED;color:#0F3675} QPushButton:pressed{background:#DCE8FA;border-color:#0F3675} QPushButton:focus{border:2px solid #77A4ED} QPushButton#primaryButton{background:#0F3675;color:#FFFFFF;border-color:#0F3675;padding:7px 15px} QPushButton#primaryButton:hover{background:#174A92;border-color:#174A92} QPushButton#primaryButton:pressed{background:#0A2858;border-color:#0A2858}
+QPushButton#detailButton{background:#0F3675;color:#FFFFFF;border-color:#0F3675;padding:4px 8px} QPushButton#reviewButton{background:#FFF4DD;color:#8A4B00;border-color:#E8B567;padding:3px 7px}
+QTableWidget{background:#FFFFFF;alternate-background-color:#FAFBFC;border:1px solid #D8E1EE;border-radius:9px;gridline-color:#E2E7EE;selection-background-color:#E8F0FD;selection-color:#0F3675} QTableWidget::item{border-bottom:1px solid #EAECF0;padding:4px;font-weight:400} QTableWidget::item:hover{background:#F0F5FC} QTableView#frozenColumnsView{background:#FFFFFF;alternate-background-color:#FAFBFC;border:0;border-right:2px solid #AEB9C8;gridline-color:#E2E7EE;selection-background-color:#E8F0FD;selection-color:#0F3675} QHeaderView::section{background:#E9EEF6;color:#1D2939;border:0;border-right:1px solid #D2DAE6;border-bottom:1px solid #C6D1E0;padding:5px 4px;font-weight:700;text-align:center}
+QScrollBar:horizontal{background:#EEF1F5;height:12px;margin:0;border:0;border-radius:6px} QScrollBar::handle:horizontal{background:#9AA9BC;min-width:43px;border-radius:6px;margin:2px} QScrollBar::handle:horizontal:hover{background:#66788F} QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;border:0;background:transparent} QScrollBar::add-page:horizontal,QScrollBar::sub-page:horizontal{background:transparent}
+QScrollBar:vertical{background:#EEF1F5;width:12px;margin:0;border:0;border-radius:6px} QScrollBar::handle:vertical{background:#9AA9BC;min-height:34px;border-radius:6px;margin:2px} QScrollBar::handle:vertical:hover{background:#66788F} QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;border:0;background:transparent} QStatusBar{background:#FFFFFF;color:#667085;border-top:1px solid #EAECF0}
 """.replace("__COMBO_ARROW__",COMBO_ARROW)
 
 
 def apply_light_palette(app: QApplication) -> None:
     palette=QPalette()
-    for role,color in ((QPalette.Window,"#F5F7FA"),(QPalette.WindowText,"#172033"),(QPalette.Base,"#FFFFFF"),(QPalette.AlternateBase,"#F7F9FC"),(QPalette.Text,"#172033"),(QPalette.Button,"#FFFFFF"),(QPalette.ButtonText,"#172033"),(QPalette.Highlight,"#DCEBFF"),(QPalette.HighlightedText,"#1261C9"),(QPalette.ToolTipBase,"#FFFFFF"),(QPalette.ToolTipText,"#172033")):
+    for role,color in ((QPalette.Window,"#F2F2F2"),(QPalette.WindowText,"#1D2939"),(QPalette.Base,"#FFFFFF"),(QPalette.AlternateBase,"#FAFBFC"),(QPalette.Text,"#1D2939"),(QPalette.Button,"#FFFFFF"),(QPalette.ButtonText,"#344054"),(QPalette.Highlight,"#E8F0FD"),(QPalette.HighlightedText,"#0F3675"),(QPalette.ToolTipBase,"#FFFFFF"),(QPalette.ToolTipText,"#1D2939")):
         palette.setColor(role,QColor(color))
     palette.setColor(QPalette.Disabled,QPalette.Text,QColor("#7B8796")); palette.setColor(QPalette.Disabled,QPalette.ButtonText,QColor("#7B8796"))
     app.setPalette(palette)

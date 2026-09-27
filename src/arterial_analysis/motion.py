@@ -39,9 +39,9 @@ class TactileProxyStyle(QProxyStyle):
             # A short blue halo makes hover/press feedback visible without rasterizing text.
             painter.save()
             rect = QRectF(widget.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
-            halo = QColor(35, 117, 232, int(78 * hover + 42 * max(0.0, progress)))
+            halo = QColor(119, 164, 237, int(78 * hover + 42 * max(0.0, progress)))
             painter.setPen(QPen(halo, 1.4 + 0.8 * max(0.0, progress)))
-            painter.setBrush(QColor(35, 117, 232, int(13 * max(0.0, progress))))
+            painter.setBrush(QColor(15, 54, 117, int(13 * max(0.0, progress))))
             painter.drawRoundedRect(rect, 8.0, 8.0)
             painter.restore()
 

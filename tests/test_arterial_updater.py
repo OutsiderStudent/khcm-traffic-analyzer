@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from arterial_analysis.updater import RELEASES_URL, ReleaseInfo, UpdateController, parse_release, update_helper_script, version_tuple
+from arterial_analysis.updater import RELEASES_URL, ReleaseInfo, UpdateController, parse_release, release_architecture, update_helper_script, version_tuple
 
 
 class ArterialUpdaterTest(unittest.TestCase):
@@ -20,12 +20,12 @@ class ArterialUpdaterTest(unittest.TestCase):
             "body": "changes",
             "html_url": "https://example.test/release",
             "assets": [{
-                "name": "KHCM-Traffic-Analyzer_v1.4.0.exe",
+                "name": "KHCM-Traffic-Analyzer_v1.4.0_x64.exe",
                 "browser_download_url": "https://example.test/app.exe",
                 "digest": "sha256:" + "a" * 64,
                 "size": 123,
             }],
-        }))
+        }), "x64")
         self.assertEqual(release.version, "1.4.0")
         self.assertEqual(release.notes, "changes")
         self.assertEqual(release.page_url, "https://example.test/release")
@@ -35,8 +35,8 @@ class ArterialUpdaterTest(unittest.TestCase):
     def test_parse_release_uses_fallback_url(self):
         release = parse_release(json.dumps({
             "tag_name": "v1.3.0",
-            "assets": [{"name": "KHCM-Traffic-Analyzer_v1.3.0.exe"}],
-        }))
+            "assets": [{"name": "KHCM-Traffic-Analyzer_v1.3.0_arm64.exe"}],
+        }), "arm64")
         self.assertEqual(release.page_url, RELEASES_URL)
 
     def test_invalid_tag_is_rejected(self):
@@ -45,7 +45,24 @@ class ArterialUpdaterTest(unittest.TestCase):
 
     def test_expected_exe_is_required(self):
         with self.assertRaises(ValueError):
-            parse_release(json.dumps({"tag_name": "v1.4.1", "assets": []}))
+            parse_release(json.dumps({"tag_name": "v1.4.1", "assets": []}), "x64")
+
+    def test_release_architecture_is_normalized(self):
+        self.assertEqual(release_architecture("AMD64"), "x64")
+        self.assertEqual(release_architecture("x86_64"), "x64")
+        self.assertEqual(release_architecture("ARM64"), "arm64")
+        self.assertEqual(release_architecture("aarch64"), "arm64")
+
+    def test_parse_release_selects_matching_architecture(self):
+        payload=json.dumps({
+            "tag_name":"v1.9.0",
+            "assets":[
+                {"name":"KHCM-Traffic-Analyzer_v1.9.0_x64.exe","browser_download_url":"x64"},
+                {"name":"KHCM-Traffic-Analyzer_v1.9.0_arm64.exe","browser_download_url":"arm64"},
+            ],
+        })
+        self.assertEqual(parse_release(payload,"x64").asset_url,"x64")
+        self.assertEqual(parse_release(payload,"arm64").asset_url,"arm64")
 
     def test_download_digest_is_verified(self):
         payload=b"verified updater payload"

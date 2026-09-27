@@ -7,10 +7,11 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QRectF, QSize, Qt
+from PySide6.QtGui import QFontDatabase, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QLineEdit, QMessageBox, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
 
-from arterial_analysis.app_fast import APP_VERSION, DetailCellDelegate, FAST_STYLE, MainWindow, NetworkDiagramDialog, NetworkDiagramWidget, OptionalColorHeader, UserGuideDialog, build_network_graph, detail_is_modified, enable_native_file_dialogs, project_argument, project_open_command
+from arterial_analysis.app_fast import APP_VERSION, DARK_STYLE, DetailCellDelegate, FAST_STYLE, MainWindow, NetworkDiagramDialog, NetworkDiagramWidget, OptionalColorHeader, UserGuideDialog, build_network_graph, detail_is_modified, enable_native_file_dialogs, project_argument, project_open_command
 from arterial_analysis.engine import SegmentInput
 from arterial_analysis.motion import MotionController
 
@@ -36,7 +37,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.8.7")
+        self.assertEqual(APP_VERSION,"1.9.0")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -78,12 +79,12 @@ class FastArterialUiTest(unittest.TestCase):
     def test_detail_cell_badge_keeps_text_inside_the_row(self):
         delegate=self.table.itemDelegateForColumn(16);self.assertIsInstance(delegate,DetailCellDelegate);self.assertIsNone(self.table.cellWidget(0,16));self.assertEqual(self.table.item(0,16).text(),"상세")
         badge=delegate.badge_rect(QRect(0,0,self.table.columnWidth(16),self.table.rowHeight(0)))
-        self.assertGreaterEqual(badge.height(),self.table.fontMetrics().height());self.assertEqual(delegate.RADIUS,8)
+        self.assertGreaterEqual(badge.height(),self.table.fontMetrics().height());self.assertEqual(delegate.RADIUS,9)
 
     def test_modified_detail_uses_dark_navy_badge(self):
         segment=self.window.project.rows("현황",2026)[0];self.assertFalse(detail_is_modified(segment));self.assertFalse(bool(self.table.item(0,16).data(Qt.UserRole+7)))
         segment.bus_stops=1;self.page.load_key(("현황",2026));delegate=self.table.itemDelegateForColumn(16)
-        self.assertTrue(detail_is_modified(segment));self.assertTrue(bool(self.table.item(0,16).data(Qt.UserRole+7)));self.assertEqual(delegate.badge_color(True).name(),"#153a66");self.assertNotEqual(delegate.badge_color(True).name(),delegate.badge_color(False).name())
+        self.assertTrue(detail_is_modified(segment));self.assertTrue(bool(self.table.item(0,16).data(Qt.UserRole+7)));self.assertEqual(delegate.badge_color(True).name(),"#0b2858");self.assertNotEqual(delegate.badge_color(True).name(),delegate.badge_color(False).name())
 
     def test_detail_cell_click_opens_the_matching_row(self):
         self.window.show();item=self.table.item(0,16);self.table.scrollToItem(item);APP.processEvents();uid=self.table.item(0,0).data(Qt.UserRole)
@@ -328,7 +329,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.window.project.ensure_tab("사업 미시행시",2033);self.page.refresh_tabs(("사업 미시행시",2033))
         scenario=1;plus=self.page.analysis_tabs.count()-1;add_rect=self.page.analysis_tabs._add_icon_rect(plus);text_rect,close_rect=self.page.analysis_tabs._content_rects(scenario)
         self.assertEqual(add_rect.size(),QSize(14,14));self.assertEqual(add_rect.center().x(),self.page.analysis_tabs.tabRect(plus).center().x()-1);self.assertEqual(add_rect.center().y(),self.page.analysis_tabs.tabRect(plus).center().y());self.assertEqual(self.page.analysis_tabs.tabRect(plus).width(),30);self.assertEqual(close_rect.size(),add_rect.size());self.assertEqual(close_rect.left()-text_rect.right()-1,self.page.analysis_tabs.LABEL_CLOSE_GAP);self.assertIsNone(self.page.analysis_tabs.tabButton(scenario,QTabBar.RightSide));self.assertIsNone(self.page.analysis_tabs.tabButton(plus,QTabBar.RightSide))
-        self.assertIn("border:1px solid #D8E1EC",FAST_STYLE)
+        self.assertIn("border:1px solid #D8E1EE",FAST_STYLE)
 
     def test_tab_levels_are_visually_connected_to_their_content(self):
         self.assertEqual(self.window.tabs.objectName(),"mainTabs");self.assertEqual(self.window.tabs.tabBar().objectName(),"mainTabBar")
@@ -336,18 +337,23 @@ class FastArterialUiTest(unittest.TestCase):
         self.assertEqual(self.page.road_tabs.objectName(),"connectedTabs");self.assertEqual(self.page.road_tabs.tabBar().objectName(),"contentTabBar")
         self.assertEqual(self.window.workflow.results_page.tabs.objectName(),"sheetTabs");self.assertIsNotNone(self.window.workflow.results_page.findChild(QFrame,"tabSheetPanel"))
         self.assertEqual(self.window.workflow.detail_page.tabs.objectName(),"sheetTabs");self.assertIsNotNone(self.window.workflow.detail_page.findChild(QFrame,"tabSheetPanel"))
-        self.assertIn("QTabBar#sheetTabs::tab:selected{background:#F1F4F8",FAST_STYLE)
-        self.assertIn("QFrame#analysisSheet{background:#F1F4F8",FAST_STYLE)
+        self.assertIn("QTabBar#sheetTabs::tab:selected{background:#EEF2F7",FAST_STYLE)
+        self.assertIn("QFrame#analysisSheet{background:#EEF2F7",FAST_STYLE)
         self.assertNotIn("border-radius:0 9px",FAST_STYLE)
 
     def test_intersection_names_are_wider_and_frozen_boundary_is_visible(self):
         self.assertEqual(self.table.columnWidth(3),118);self.assertEqual(self.table.columnWidth(6),118)
-        self.assertIn("border-right:2px solid #AEB9C8",self.table.frozen.styleSheet())
+        self.assertEqual(self.table.frozen.objectName(),"frozenColumnsView");self.assertIn("QTableView#frozenColumnsView",FAST_STYLE);self.assertIn("border-right:2px solid #AEB9C8",FAST_STYLE)
 
     def test_excel_controls_use_green_visual_system(self):
         for button in (self.page.choose_source,self.page.open_source,self.page.apply_source,self.page.refresh_source):self.assertFalse(button.icon().isNull())
         self.assertEqual(self.page.choose_source.objectName(),"excelPrimaryButton");self.assertEqual(self.page.open_source.objectName(),"excelButton")
         self.assertIn("#107C41",FAST_STYLE);self.assertIn("#EAF5EE",FAST_STYLE)
+
+    def test_master_design_system_and_dark_mode_are_available(self):
+        self.assertIn('font-family:"NanumSquare"',FAST_STYLE);self.assertIn("#0F3675",FAST_STYLE);self.assertIn("#77A4ED",FAST_STYLE);self.assertIn("NanumSquare",QFontDatabase.families())
+        self.assertTrue(self.window.theme_action.isCheckable());self.window.apply_theme(True,False);self.assertTrue(self.window.theme_action.isChecked());self.assertEqual(APP.palette().color(QPalette.Window).name(),"#151a23");self.assertIn("#151A23",DARK_STYLE)
+        self.window.apply_theme(False,False);self.assertFalse(self.window.theme_action.isChecked());self.assertEqual(APP.palette().color(QPalette.Window).name(),"#f2f2f2")
 
     def test_optional_columns_use_five_subtle_visual_colors(self):
         body_colors=[self.table.item(0,column).background().color().name() for column in (17,18,19,20,21)]

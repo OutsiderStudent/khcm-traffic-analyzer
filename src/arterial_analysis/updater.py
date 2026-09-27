@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -20,6 +21,41 @@ REPOSITORY = "OutsiderStudent/khcm-traffic-analyzer"
 RELEASE_API = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 RELEASES_URL = f"https://github.com/{REPOSITORY}/releases/latest"
 ASSET_PREFIX = "KHCM-Traffic-Analyzer"
+
+
+def _native_windows_machine() -> str:
+    """Detect the native Windows CPU even when this process is emulated."""
+    if os.name != "nt":
+        return ""
+    try:
+        import ctypes
+
+        process_machine = ctypes.c_ushort()
+        native_machine = ctypes.c_ushort()
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        is_wow64_process2 = kernel32.IsWow64Process2
+        is_wow64_process2.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_ushort),
+            ctypes.POINTER(ctypes.c_ushort),
+        ]
+        is_wow64_process2.restype = ctypes.c_bool
+        if is_wow64_process2(kernel32.GetCurrentProcess(), ctypes.byref(process_machine), ctypes.byref(native_machine)):
+            return {0xAA64: "ARM64", 0x8664: "AMD64"}.get(native_machine.value, "")
+    except (AttributeError, OSError):
+        pass
+    return ""
+
+
+def release_architecture(machine: str | None = None) -> str:
+    """Return the release asset architecture, preferring the native Windows CPU."""
+    if machine is None:
+        # An x64 process running under Windows-on-Arm reports AMD64 through
+        # platform.machine(). IsWow64Process2 exposes the native CPU so the
+        # updater can migrate that installation to the native ARM64 build.
+        machine = _native_windows_machine() or os.environ.get("PROCESSOR_ARCHITEW6432") or platform.machine()
+    normalized = str(machine or "").strip().lower().replace("-", "_")
+    return "arm64" if normalized in {"arm64", "aarch64", "arm_64"} else "x64"
 
 
 def update_helper_script() -> str:
@@ -68,14 +104,15 @@ class ReleaseInfo:
     size: int
 
 
-def parse_release(payload: bytes | str) -> ReleaseInfo:
+def parse_release(payload: bytes | str, architecture: str | None = None) -> ReleaseInfo:
     data = json.loads(payload)
     tag = str(data.get("tag_name", ""))
     parsed = version_tuple(tag)
     if parsed is None:
         raise ValueError("최신 릴리스의 버전 형식이 올바르지 않습니다.")
     version = ".".join(str(part) for part in parsed)
-    expected_name = f"{ASSET_PREFIX}_v{version}.exe"
+    architecture = architecture or release_architecture()
+    expected_name = f"{ASSET_PREFIX}_v{version}_{architecture}.exe"
     asset = next((item for item in data.get("assets", []) if item.get("name") == expected_name), None)
     if asset is None:
         raise ValueError(f"릴리스에 {expected_name} 파일이 없습니다.")
@@ -96,6 +133,7 @@ class UpdateController(QObject):
     def __init__(self, current_version: str, parent: QWidget) -> None:
         super().__init__(parent)
         self.current_version = current_version
+        self.architecture = release_architecture()
         self.parent_widget = parent
         self.network = QNetworkAccessManager(self)
         self._reply: QNetworkReply | None = None
@@ -125,7 +163,7 @@ class UpdateController(QObject):
         try:
             if reply.error() != QNetworkReply.NetworkError.NoError:
                 raise RuntimeError(reply.errorString())
-            release = parse_release(bytes(reply.readAll()))
+            release = parse_release(bytes(reply.readAll()), self.architecture)
             current = version_tuple(self.current_version)
             latest = version_tuple(release.version)
             if current is None or latest is None:
@@ -165,7 +203,7 @@ class UpdateController(QObject):
             return
         update_dir = Path(tempfile.gettempdir()) / f"{ASSET_PREFIX}-updates"
         update_dir.mkdir(parents=True, exist_ok=True)
-        self._download_path = update_dir / f"{ASSET_PREFIX}_v{release.version}.exe.part"
+        self._download_path = update_dir / f"{ASSET_PREFIX}_v{release.version}_{self.architecture}.exe.part"
         self._download_file = self._download_path.open("wb")
         self._release = release
         request = QNetworkRequest(QUrl(release.asset_url))
@@ -250,7 +288,7 @@ class UpdateController(QObject):
             QMessageBox.information(self.parent_widget, "업데이트", "업데이트 재시작을 취소했습니다.")
             return
         downloads = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation))
-        fallback = downloads / f"{ASSET_PREFIX}_v{release.version}.exe"
+        fallback = downloads / f"{ASSET_PREFIX}_v{release.version}_{self.architecture}.exe"
         script = Path(tempfile.gettempdir()) / f"{ASSET_PREFIX}-updater.ps1"
         script.write_text(update_helper_script(), encoding="utf-8-sig")
         started, _ = QProcess.startDetached(
