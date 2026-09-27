@@ -55,7 +55,7 @@ jobs:
           $builtExe = Get-ChildItem -LiteralPath dist -Filter '*.exe' | Select-Object -First 1
           if (-not $builtExe) { throw 'Built executable not found.' }
           $version = '${{ github.ref_name }}'
-          if (-not $version.StartsWith('v')) { $version = 'v1.9.1-preview' }
+          if (-not $version.StartsWith('v')) { $version = 'v1.9.2-preview' }
           $releaseAsset = "dist/KHCM-Traffic-Analyzer_${version}_${{ matrix.arch }}.exe"
           Copy-Item -LiteralPath $builtExe.FullName -Destination $releaseAsset
       - uses: actions/upload-artifact@v4
