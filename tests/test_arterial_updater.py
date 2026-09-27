@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from arterial_analysis.updater import RELEASES_URL, ReleaseInfo, UpdateController, parse_release, release_architecture, update_helper_script, version_tuple
+from arterial_analysis.updater import RELEASES_URL, UPDATE_MANIFEST_URL, ReleaseInfo, UpdateController, parse_release, release_architecture, update_helper_script, version_tuple
 
 
 class ArterialUpdaterTest(unittest.TestCase):
@@ -63,6 +63,22 @@ class ArterialUpdaterTest(unittest.TestCase):
         })
         self.assertEqual(parse_release(payload,"x64").asset_url,"x64")
         self.assertEqual(parse_release(payload,"arm64").asset_url,"arm64")
+
+    def test_static_manifest_selects_matching_architecture_without_api(self):
+        payload=json.dumps({
+            "version":"1.9.1",
+            "title":"title",
+            "notes":"notes",
+            "page_url":"page",
+            "assets":{
+                "x64":{"url":"x64","digest":"sha256:"+"a"*64,"size":10},
+                "arm64":{"url":"arm64","digest":"sha256:"+"b"*64,"size":20},
+            },
+        })
+        self.assertNotIn("api.github.com",UPDATE_MANIFEST_URL)
+        self.assertEqual(parse_release(payload,"x64").asset_url,"x64")
+        self.assertEqual(parse_release(payload,"arm64").asset_url,"arm64")
+        self.assertEqual(parse_release(payload,"arm64").digest,"sha256:"+"b"*64)
 
     def test_download_digest_is_verified(self):
         payload=b"verified updater payload"

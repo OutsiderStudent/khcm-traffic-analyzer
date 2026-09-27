@@ -18,8 +18,8 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog, QWidge
 
 
 REPOSITORY = "OutsiderStudent/khcm-traffic-analyzer"
-RELEASE_API = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 RELEASES_URL = f"https://github.com/{REPOSITORY}/releases/latest"
+UPDATE_MANIFEST_URL = f"https://github.com/{REPOSITORY}/releases/latest/download/update.json"
 ASSET_PREFIX = "KHCM-Traffic-Analyzer"
 
 
@@ -106,12 +106,31 @@ class ReleaseInfo:
 
 def parse_release(payload: bytes | str, architecture: str | None = None) -> ReleaseInfo:
     data = json.loads(payload)
+    architecture = architecture or release_architecture()
+    if "tag_name" not in data:
+        version_value = str(data.get("version", ""))
+        parsed = version_tuple(version_value)
+        if parsed is None:
+            raise ValueError("최신 릴리스의 버전 형식이 올바르지 않습니다.")
+        version = ".".join(str(part) for part in parsed)
+        assets = data.get("assets") or {}
+        asset = assets.get(architecture) if isinstance(assets, dict) else None
+        if not isinstance(asset, dict):
+            raise ValueError(f"릴리스에 {architecture} 업데이트 파일이 없습니다.")
+        return ReleaseInfo(
+            version=version,
+            title=str(data.get("title") or f"KHCM Traffic Analyzer v{version}"),
+            notes=str(data.get("notes") or "변경사항이 제공되지 않았습니다."),
+            page_url=str(data.get("page_url") or RELEASES_URL),
+            asset_url=str(asset.get("url") or ""),
+            digest=str(asset.get("digest") or ""),
+            size=int(asset.get("size") or 0),
+        )
     tag = str(data.get("tag_name", ""))
     parsed = version_tuple(tag)
     if parsed is None:
         raise ValueError("최신 릴리스의 버전 형식이 올바르지 않습니다.")
     version = ".".join(str(part) for part in parsed)
-    architecture = architecture or release_architecture()
     expected_name = f"{ASSET_PREFIX}_v{version}_{architecture}.exe"
     asset = next((item for item in data.get("assets", []) if item.get("name") == expected_name), None)
     if asset is None:
@@ -149,8 +168,9 @@ class UpdateController(QObject):
                 QMessageBox.information(self.parent_widget, "업데이트", "이미 업데이트를 확인하고 있습니다.")
             return
         self._manual = manual
-        request = QNetworkRequest(QUrl(RELEASE_API))
-        request.setRawHeader(b"Accept", b"application/vnd.github+json")
+        request = QNetworkRequest(QUrl(UPDATE_MANIFEST_URL))
+        request.setAttribute(QNetworkRequest.Attribute.RedirectPolicyAttribute, QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy)
+        request.setRawHeader(b"Accept", b"application/json")
         request.setRawHeader(b"User-Agent", f"KHCM-Traffic-Analyzer/{self.current_version}".encode("ascii"))
         request.setTransferTimeout(15_000)
         self._reply = self.network.get(request)
@@ -162,7 +182,9 @@ class UpdateController(QObject):
             return
         try:
             if reply.error() != QNetworkReply.NetworkError.NoError:
-                raise RuntimeError(reply.errorString())
+                status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+                detail = f" (오류 코드: {status})" if status else ""
+                raise RuntimeError("업데이트 서버에 연결하지 못했습니다. 인터넷 연결을 확인한 뒤 잠시 후 다시 시도해 주세요." + detail)
             release = parse_release(bytes(reply.readAll()), self.architecture)
             current = version_tuple(self.current_version)
             latest = version_tuple(release.version)
