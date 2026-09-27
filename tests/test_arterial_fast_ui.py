@@ -493,6 +493,21 @@ class FastArterialUiTest(unittest.TestCase):
             self.assertEqual(button.text(),text);self.assertGreaterEqual(button.minimumWidth(),button.sizeHint().width());self.assertGreaterEqual(button.minimumHeight(),button.sizeHint().height())
         QApplication.clipboard().clear()
 
+    def test_narrow_input_reduces_visible_buttons_without_eliding_labels(self):
+        self.page._update_responsive_controls(720)
+        self.assertFalse(self.page.add.isHidden());self.assertFalse(self.page.more_button.isHidden());self.assertFalse(self.page.next_button.isHidden())
+        for button in (self.page.copy,self.page.paste,self.page.delete,self.page.reset,self.page.diagram_button,self.page.optional,self.page.import_intersection_los):
+            self.assertTrue(button.isHidden())
+        self.assertFalse(self.page.choose_source.isHidden());self.assertFalse(self.page.sheet.isHidden());self.assertFalse(self.page.excel_more_button.isHidden())
+        for button in (self.page.open_source,self.page.apply_source,self.page.refresh_source):self.assertTrue(button.isHidden())
+        visible_labels=(self.page.add.text(),self.page.more_button.text(),self.page.next_button.text(),self.page.choose_source.text(),self.page.excel_more_button.text())
+        self.assertFalse(any("…" in text or "..." in text for text in visible_labels))
+        self.assertEqual({action.text() for action in self.page.more_menu.actions()},{button.text() for button in self.page._action_buttons[1:]})
+
+        self.page._update_responsive_controls(2400)
+        self.assertTrue(self.page.more_button.isHidden());self.assertTrue(self.page.excel_more_button.isHidden())
+        for button in self.page._action_buttons+(self.page.open_source,self.page.apply_source,self.page.refresh_source):self.assertFalse(button.isHidden())
+
     def test_result_to_detail_does_not_repeat_excel_error_dialog(self):
         self.fill_row(0);self.page.save_current();self.window.project.segments[0].volume_link_error="연결 오류"
         self.window.workflow.stack.setCurrentIndex(1)
