@@ -12,7 +12,6 @@ from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QLineEdit, QMessageBox, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
 
 from arterial_analysis.app_fast import APP_VERSION, DARK_STYLE, DetailCellDelegate, FAST_STYLE, MainWindow, NetworkDiagramDialog, NetworkDiagramWidget, OptionalColorHeader, UserGuideDialog, build_network_graph, detail_is_modified, enable_native_file_dialogs, project_argument, project_open_command
-from arterial_analysis.app_v2 import resource_path
 from arterial_analysis.engine import SegmentInput
 from arterial_analysis.motion import MotionController
 
@@ -353,7 +352,8 @@ class FastArterialUiTest(unittest.TestCase):
 
     def test_master_design_system_and_dark_mode_are_available(self):
         self.assertIn('font-family:"NanumSquare"',FAST_STYLE);self.assertIn("#0F3675",FAST_STYLE);self.assertIn("#77A4ED",FAST_STYLE)
-        for name in ("NanumSquareL.ttf","NanumSquareR.ttf","NanumSquareB.ttf","NanumSquareEB.ttf"):self.assertTrue(Path(resource_path(f"assets/{name}")).is_file())
+        asset_dir=Path(__file__).resolve().parents[1]/"assets"
+        for name in ("NanumSquareL.ttf","NanumSquareR.ttf","NanumSquareB.ttf","NanumSquareEB.ttf"):self.assertTrue((asset_dir/name).is_file())
         self.assertTrue(self.window.theme_action.isCheckable());self.window.apply_theme(True,False);self.assertTrue(self.window.theme_action.isChecked());self.assertEqual(APP.palette().color(QPalette.Window).name(),"#151a23");self.assertIn("#151A23",DARK_STYLE)
         self.window.apply_theme(False,False);self.assertFalse(self.window.theme_action.isChecked());self.assertEqual(APP.palette().color(QPalette.Window).name(),"#f2f2f2")
 
