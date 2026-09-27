@@ -89,9 +89,9 @@ jobs:
           $x64 = Get-ChildItem -LiteralPath release-assets -Filter '*_x64.exe' | Select-Object -First 1
           $arm64 = Get-ChildItem -LiteralPath release-assets -Filter '*_arm64.exe' | Select-Object -First 1
           if (-not $x64 -or -not $arm64) { throw 'Architecture-specific executables not found.' }
-          $changelog = Get-Content -LiteralPath CHANGELOG.md -Raw
+          $changelog = Get-Content -LiteralPath CHANGELOG.md -Raw -Encoding UTF8
           $match = [regex]::Match($changelog, "(?ms)^## $([regex]::Escape($version))\s*(.*?)(?=^## |\z)")
-          $notes = if ($match.Success) { $match.Groups[1].Value.Trim() } else { '자세한 변경사항은 GitHub 릴리스를 확인해 주세요.' }
+          $notes = if ($match.Success) { $match.Groups[1].Value.Trim() } else { 'See the GitHub release page for details.' }
           $manifest = @{
             version = $version
             title = "KHCM Traffic Analyzer $tag"
