@@ -7,6 +7,7 @@ from pathlib import Path
 from openpyxl import Workbook
 
 from arterial_analysis.excel_links import (
+    clear_saved_workbook_cache,
     format_external_formula,
     list_sheets,
     parse_external_formula,
@@ -19,6 +20,34 @@ from arterial_analysis.excel_links import (
 
 
 class ExcelLinksTest(unittest.TestCase):
+    def tearDown(self):
+        clear_saved_workbook_cache()
+
+    def test_sheet_metadata_is_lightweight_and_saved_values_reused_until_saved(self):
+        from arterial_analysis.excel_links import _openpyxl_book
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"cached.xlsx";book=Workbook();sheet=book.active;sheet.title="Sheet1";sheet["A1"]=1200;sheet["B1"]=.945;book.save(path)
+            with patch("arterial_analysis.excel_links._openpyxl_book",wraps=_openpyxl_book) as opened:
+                self.assertEqual(list_sheets(str(path)),["Sheet1"])
+                opened.assert_not_called()
+                self.assertEqual(read_saved_cells(str(path),"Sheet1",["A1"])["A1"][0],1200)
+                self.assertEqual(read_saved_expressions(str(path),"Sheet1",["B1"],"phf")["B1"][0],.95)
+                self.assertEqual(opened.call_count,1)
+                sheet["A1"]=34567;book.save(path)
+                self.assertEqual(read_saved_cells(str(path),"Sheet1",["A1"])["A1"][0],34567)
+                self.assertEqual(opened.call_count,2)
+            book.close()
+            path.unlink()
+            with self.assertRaises(FileNotFoundError):read_saved_cells(str(path),"Sheet1",["A1"])
+
+    def test_cache_limit_releases_old_workbooks(self):
+        from arterial_analysis.excel_links import _BOOK_CACHE
+        with tempfile.TemporaryDirectory() as folder:
+            for index in range(3):
+                path=Path(folder)/f"{index}.xlsx";book=Workbook();book.save(path);book.close();read_saved_cells(str(path),"Sheet",["A1"])
+            self.assertEqual(len(_BOOK_CACHE),2)
+            self.assertNotIn(str((Path(folder)/"0.xlsx").resolve()),_BOOK_CACHE)
+
     def test_link_window_disables_excel_enter_move_and_restores_it(self):
         path=str((Path(tempfile.gettempdir())/"traffic.xlsx").resolve())
         window=SimpleNamespace(Hwnd=321,Caption="traffic.xlsx",WindowState=0,Activate=Mock(),Close=Mock())

@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import ctypes
 import re
+from collections import OrderedDict
+from contextlib import contextmanager
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
+from threading import RLock
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 
 SUPPORTED_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".xlsb"}
 OPENPYXL_EXTENSIONS = {".xlsx", ".xlsm"}
+_BOOK_CACHE = OrderedDict()
+_BOOK_CACHE_LOCK = RLock()
+_BOOK_CACHE_LIMIT = 2
 _CELL = r"\$?[A-Za-z]{1,3}\$?[1-9]\d*"
 _TOKEN = re.compile(rf"^(?P<a>{_CELL})(?::(?P<b>{_CELL}))?$")
 _EXTERNAL_FORMULA = re.compile(
@@ -67,14 +75,52 @@ def parse_external_formula(formula: str, default_path: str = "") -> tuple[str,st
 def _openpyxl_book(path: str):
     from openpyxl import load_workbook
     source=Path(path).resolve()
-    return load_workbook(source,read_only=False,data_only=True,keep_links=False,keep_vba=source.suffix.lower()==".xlsm")
+    # Only saved values and layout metadata are read; retaining VBA archives is unnecessary.
+    return load_workbook(source,read_only=False,data_only=True,keep_links=False,keep_vba=False)
+
+
+def _file_signature(path):
+    stat=Path(path).stat()
+    return stat.st_mtime_ns,stat.st_ctime_ns,stat.st_size
+
+
+def clear_saved_workbook_cache():
+    with _BOOK_CACHE_LOCK:
+        while _BOOK_CACHE:
+            _,(_,book)=_BOOK_CACHE.popitem(last=False)
+            book.close()
+
+
+@contextmanager
+def _saved_workbook(path):
+    """Reuse at most two saved workbooks; never reuse a changed or missing file."""
+    source=str(Path(path).resolve())
+    with _BOOK_CACHE_LOCK:
+        signature=_file_signature(source)
+        cached=_BOOK_CACHE.pop(source,None)
+        if cached is not None and cached[0]!=signature:
+            cached[1].close();cached=None
+        if cached is None:
+            book=_openpyxl_book(source)
+            if _file_signature(source)!=signature:
+                book.close()
+                raise RuntimeError("Excel 파일이 저장 중입니다. 저장이 끝난 뒤 다시 새로고침해 주세요.")
+            cached=(signature,book)
+        _BOOK_CACHE[source]=cached
+        while len(_BOOK_CACHE)>_BOOK_CACHE_LIMIT:
+            _,(_,old)=_BOOK_CACHE.popitem(last=False);old.close()
+        yield cached[1]
+        if _file_signature(source)!=signature:
+            _BOOK_CACHE.pop(source,None);cached[1].close()
+            raise RuntimeError("Excel 파일이 읽는 동안 변경되었습니다. 다시 새로고침해 주세요.")
 
 
 def list_sheets(path: str) -> list[str]:
     if Path(path).suffix.lower() in OPENPYXL_EXTENSIONS:
-        workbook=_openpyxl_book(path)
-        try:return list(workbook.sheetnames)
-        finally:workbook.close()
+        # Source selection only needs workbook metadata, not every worksheet cell.
+        with ZipFile(path) as archive:
+            root=ElementTree.fromstring(archive.read("xl/workbook.xml"))
+        return [sheet.attrib["name"] for sheet in root.findall("{*}sheets/{*}sheet")]
     pythoncom,client=_excel_modules();pythoncom.CoInitialize();excel=workbook=None
     try:
         excel=client.DispatchEx("Excel.Application");excel.Visible=False;excel.DisplayAlerts=False;excel.AskToUpdateLinks=False
@@ -119,8 +165,7 @@ def read_saved_expressions(path: str,sheet: str,expressions: list[str],kind: str
     """주소식들을 통합문서 한 번 열기로 읽는다. volume은 각 셀 반올림 후 합산한다."""
     normalized=list(dict.fromkeys(normalize_expression(item) for item in expressions));results={}
     if Path(path).suffix.lower() in OPENPYXL_EXTENSIONS:
-        workbook=_openpyxl_book(path)
-        try:
+        with _saved_workbook(path) as workbook:
             if str(sheet) not in workbook.sheetnames:raise ValueError(f"'{sheet}' 시트를 찾을 수 없습니다.")
             worksheet=workbook[str(sheet)]
             for expression in normalized:
@@ -138,7 +183,6 @@ def read_saved_expressions(path: str,sheet: str,expressions: list[str],kind: str
                     results[expression]=(value,expression,"")
                 except Exception as exc:results[expression]=(None,expression,str(exc))
             return results
-        finally:workbook.close()
     pythoncom,client=_excel_modules();pythoncom.CoInitialize();excel=workbook=None
     try:
         excel=client.DispatchEx("Excel.Application");excel.Visible=False;excel.DisplayAlerts=False;excel.AskToUpdateLinks=False

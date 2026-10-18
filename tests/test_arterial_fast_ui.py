@@ -1,12 +1,14 @@
 import os
 import tempfile
+import time
 import unittest
+from threading import Event
 from unittest.mock import Mock, patch
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QRectF, QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QLineEdit, QMessageBox, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
@@ -26,7 +28,14 @@ class FastArterialUiTest(unittest.TestCase):
         self.table = self.page.external
 
     def tearDown(self):
+        self.wait_for_links()
         self.window.deleteLater()
+
+    def wait_for_links(self):
+        deadline=time.monotonic()+5
+        while self.page._refresh_job is not None and time.monotonic()<deadline:
+            APP.processEvents();time.sleep(.005)
+        self.assertIsNone(self.page._refresh_job,"Excel background read did not finish")
 
     def fill_row(self, row, volume=1500):
         values = {1:"비슬로",2:"1",3:"기점",5:"2",6:"종점",7:"1,000",8:"2",10:"120",11:"50",12:f"{volume:,}",13:"0.95"}
@@ -37,7 +46,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.9.2")
+        self.assertEqual(APP_VERSION,"1.9.3")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -272,12 +281,109 @@ class FastArterialUiTest(unittest.TestCase):
         with patch("arterial_analysis.app_fast.read_saved_cells",return_value=values) as reader:self.page.refresh_links()
         reader.assert_called_once();first,second=self.window.project.rows("현황",2026)[:2];self.assertEqual(first.main_volume,1200);self.assertEqual(second.main_volume,1300)
 
+    def test_background_refresh_keeps_ui_responsive_and_preserves_table_items(self):
+        info=self.window.project.tab_info("현황",2026);info.update(source_path=__file__,source_sheet="Sheet1")
+        self.window.project.rows("현황",2026)[0].volume_source_cell="B12";self.page.load_key(("현황",2026))
+        self.table.item(0,0).setCheckState(Qt.Checked);identity=self.table.item(0,12)
+        release=Event();entered=Event();ticks=[]
+        def read(*_):
+            entered.set();release.wait(3);return {"B12":(1400,"B12","")}
+        original_apply=self.page._apply_link_results
+        def apply(groups,results):
+            self.assertEqual(QThread.currentThread(),APP.thread())
+            return original_apply(groups,results)
+        with patch("arterial_analysis.app_fast.read_saved_cells",side_effect=read),patch.object(self.page,"load_key") as reload,patch.object(self.page,"_apply_link_results",side_effect=apply) as applied:
+            try:
+                self.page.refresh_source.click()
+                self.assertTrue(entered.wait(2))
+                QTimer.singleShot(0,lambda:ticks.append(True));APP.processEvents()
+                self.assertEqual(ticks,[True]);self.assertIsNotNone(self.page._refresh_job)
+            finally:release.set()
+            self.wait_for_links();reload.assert_not_called();applied.assert_called_once()
+        self.assertIs(self.table.item(0,12),identity);self.assertEqual(identity.text(),"1,400")
+        self.assertEqual(self.table.item(0,0).checkState(),Qt.Checked)
+
+    def test_background_result_does_not_overwrite_a_new_link(self):
+        info=self.window.project.tab_info("현황",2026);info.update(source_path=__file__,source_sheet="Sheet1")
+        self.window.project.rows("현황",2026)[0].volume_source_cell="B12";self.page.load_key(("현황",2026))
+        release=Event();entered=Event()
+        def read(*_):
+            entered.set();release.wait(3);return {"B12":(1400,"B12","")}
+        with patch("arterial_analysis.app_fast.read_saved_cells",side_effect=read):
+            try:
+                self.page.request_link_refresh();self.assertTrue(entered.wait(2))
+                self.page._assign_formula(self.table,0,12,"=C20")
+            finally:release.set()
+            self.wait_for_links()
+        current=self.window.project.rows("현황",2026)[0]
+        self.assertEqual(current.volume_source_cell,"C20");self.assertNotEqual(current.main_volume,1400)
+
+    def test_analysis_waits_for_background_values_without_blocking_ui(self):
+        self.fill_row(0,900)
+        info=self.window.project.tab_info("현황",2026);info.update(source_path=__file__,source_sheet="Sheet1")
+        self.window.project.rows("현황",2026)[0].volume_source_cell="B12";self.page.load_key(("현황",2026))
+        release=Event();entered=Event()
+        def read(*_):
+            entered.set();release.wait(3);return {"B12":(1400,"B12","")}
+        with patch("arterial_analysis.app_fast.read_saved_cells",side_effect=read):
+            try:
+                self.window.workflow.go(1);self.assertTrue(entered.wait(2))
+                self.assertEqual(self.window.workflow.stack.currentIndex(),0)
+                APP.processEvents()
+            finally:release.set()
+            self.wait_for_links()
+        self.assertEqual(self.window.workflow.stack.currentIndex(),1)
+        self.assertEqual(self.window.project.rows("현황",2026)[0].main_volume,1400)
+
+    def test_background_result_is_discarded_after_project_replacement(self):
+        from arterial_analysis.app_fast import blank_project
+        info=self.window.project.tab_info("현황",2026);info.update(source_path=__file__,source_sheet="Sheet1")
+        self.window.project.rows("현황",2026)[0].volume_source_cell="B12";self.page.load_key(("현황",2026))
+        release=Event();entered=Event();replacement=blank_project()
+        def read(*_):
+            entered.set();release.wait(3);return {"B12":(1400,"B12","")}
+        with patch("arterial_analysis.app_fast.read_saved_cells",side_effect=read):
+            try:
+                self.page.request_link_refresh();self.assertTrue(entered.wait(2))
+                self.window.workflow.load_project(replacement)
+            finally:release.set()
+            self.wait_for_links()
+        self.assertIs(self.page.project,replacement)
+        self.assertFalse(any(s.main_volume==1400 for s in replacement.segments))
+
+    def test_background_analysis_is_cancelled_when_user_switches_tabs(self):
+        self.fill_row(0,900)
+        info=self.window.project.tab_info("현황",2026);info.update(source_path=__file__,source_sheet="Sheet1")
+        self.window.project.rows("현황",2026)[0].volume_source_cell="B12";self.page.load_key(("현황",2026))
+        self.window.project.ensure_tab("사업 미시행시",2033)
+        release=Event();entered=Event()
+        def read(*_):
+            entered.set();release.wait(3);return {"B12":(1400,"B12","")}
+        with patch("arterial_analysis.app_fast.read_saved_cells",side_effect=read):
+            try:
+                self.window.workflow.go(1);self.assertTrue(entered.wait(2))
+                self.page.load_key(("사업 미시행시",2033))
+            finally:release.set()
+            self.wait_for_links()
+        self.assertEqual(self.window.workflow.stack.currentIndex(),0)
+
+    def test_refresh_error_keeps_last_value_and_marks_existing_cell(self):
+        self.fill_row(0,1300)
+        info=self.window.project.tab_info("현황",2026);info.update(source_path=__file__,source_sheet="Sheet1")
+        self.window.project.rows("현황",2026)[0].volume_source_cell="B12";self.page.load_key(("현황",2026))
+        with patch("arterial_analysis.app_fast.read_saved_cells",side_effect=OSError("source unavailable")):
+            self.page.refresh_links()
+        current=self.window.project.rows("현황",2026)[0]
+        self.assertEqual(current.main_volume,1300);self.assertIn("source unavailable",current.volume_link_error)
+        self.assertEqual(self.table.item(0,12).data(Qt.UserRole+6),"error")
+
     def test_ctrl_h_changes_selected_link_source_and_keeps_cell_address(self):
         segment=self.window.project.rows("현황",2026)[0];segment.volume_source_cell="C20";info=self.window.project.tab_info("현황",2026);info.update(source_path=str(Path(__file__).resolve()),source_sheet="현황2026");self.page.load_key(("현황",2026));self.table.setCurrentCell(0,12)
         replacement=str(__file__)
         with patch("arterial_analysis.app_fast.ReplaceExcelLinksDialog") as dialog_type,patch("arterial_analysis.app_fast.read_saved_cells",return_value={"C20":(1500,"C20","")}):
             dialog=dialog_type.return_value;dialog.exec.return_value=QDialog.Accepted;dialog.values.return_value=(replacement,"미시행2033")
             self.page.replace_excel_sources(self.table)
+            self.wait_for_links()
         segment=self.window.project.rows("현황",2026)[0]
         self.assertEqual(segment.volume_source_cell,"C20");self.assertEqual(segment.volume_source_path,str(Path(replacement).resolve()));self.assertEqual(segment.volume_source_sheet,"미시행2033")
 
@@ -304,7 +410,8 @@ class FastArterialUiTest(unittest.TestCase):
     def test_formula_bar_assigns_link_and_refreshes_saved_value(self):
         self.table.setCurrentCell(0,12);self.page.cell_selected(self.table,0,12)
         formula=f"='{Path(__file__).resolve().parent}\\[{Path(__file__).name}]현황2026'!$B$12";self.page.formula.setText(formula)
-        with patch("arterial_analysis.app_fast.read_saved_cells",return_value={"B12":(1700,"B12","")}):self.page.apply_formula_bar()
+        with patch("arterial_analysis.app_fast.read_saved_cells",return_value={"B12":(1700,"B12","")}):
+            self.page.apply_formula_bar();self.wait_for_links()
         segment=self.window.project.rows("현황",2026)[0]
         self.assertEqual(segment.main_volume,1700);self.assertEqual(segment.volume_source_cell,"B12")
 
