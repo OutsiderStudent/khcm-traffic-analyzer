@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from PySide6.QtCore import QByteArray, QEvent, QMimeData, QObject, QPointF, QRectF, QRunnable, QSettings, QSize, QThreadPool, QTimer, QStandardPaths, Qt, Signal, Slot
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QGuiApplication, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap, QShortcut
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
+from PySide6.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QMainWindow,
     QHeaderView, QInputDialog, QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea, QSpinBox, QStackedWidget, QStyle, QTabBar, QTabWidget, QTableWidgetItem,
     QTextBrowser, QToolButton, QVBoxLayout, QWidget)
@@ -35,7 +35,7 @@ from .icons import symbol
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.10.0"
+APP_VERSION = "1.10.1"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -677,7 +677,7 @@ class ReplaceExcelLinksDialog(QDialog):
 
 class FastDetailDialog(SegmentDetailDialog):
     def __init__(self,segment,project,parent=None):
-        QDialog.__init__(self,parent); self.segment=segment; self.project=project; self.setWindowTitle("구간별 상세조건"); self.setMinimumWidth(490)
+        QDialog.__init__(self,parent); self.segment=segment; self.project=project; self.setWindowTitle("상세 설정"); self.setMinimumWidth(490)
         root=QVBoxLayout(self); title=QLabel(f"{segment.road_name} · {segment.start_name} {segment.direction} {segment.end_name}"); title.setObjectName("cardTitle"); root.addWidget(title)
         form=QFormLayout(); self.functional=QComboBox();self.functional.addItems(FUNCTIONAL_CLASSES);self.functional.setCurrentText(segment.functional_class)
         self.condition=QComboBox();self.condition.addItems(["보통","양호","자동"]);self.condition.setCurrentText(segment.road_condition_override)
@@ -694,8 +694,28 @@ class FastDetailDialog(SegmentDetailDialog):
         self.fcw=QDoubleSpinBox();self.fcw.setRange(0,3);self.fcw.setDecimals(3);self.fcw.setSpecialValueText("자동");self.fcw.setValue(segment.fcw_override or 0)
         rows=(("기능등급",self.functional),("도로여건",self.condition),("간선도로 유형",self.arterial),("버스정류장 수",self.bus),("진출입로 수",self.access),("신호횡단보도 수",self.crossing),("분석기간 T(시간)",self.period),("기본 포화교통류율",self.base),("포화교통류율 보정계수",self.sat),("초기 대기차량",self.queue),("신호 연동",self.coordinated),("연동보정계수 PF",self.pf),("횡단신호보정계수 fcw",self.fcw))
         for label,widget in rows:form.addRow(label,widget)
-        root.addLayout(form); note=QLabel("기본값은 저규격·보통이며, 간선도로 유형은 편람 표 12-3·12-4 조합으로 자동 판정합니다.");note.setObjectName("infoBar");root.addWidget(note)
+        root.addLayout(form)
+        self.applied_type = QLabel()
+        self.applied_type.setObjectName("calculatedValue")
+        self.applied_type.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        summary = QFormLayout()
+        summary.addRow("적용 유형", self.applied_type)
+        root.addLayout(summary)
+        for selector in (self.functional, self.condition, self.arterial):
+            selector.currentTextChanged.connect(self.update_applied_type)
+        self.update_applied_type()
         buttons=QDialogButtonBox(QDialogButtonBox.RestoreDefaults|QDialogButtonBox.Ok|QDialogButtonBox.Cancel);buttons.button(QDialogButtonBox.RestoreDefaults).setText("기본값");buttons.button(QDialogButtonBox.Ok).setText("적용");buttons.button(QDialogButtonBox.Cancel).setText("취소");buttons.button(QDialogButtonBox.RestoreDefaults).clicked.connect(self.defaults);buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);root.addWidget(buttons)
+    def update_applied_type(self):
+        functional = self.functional.currentText()
+        condition = self.condition.currentText()
+        if condition == "자동":
+            condition = road_condition(functional, self.segment.lanes)
+        selected = self.arterial.currentText()
+        if selected == "자동":
+            self.applied_type.setText(f"{arterial_type(functional, condition)} (자동)")
+        else:
+            self.applied_type.setText(f"{selected} (직접 선택)")
+
     def defaults(self):self.functional.setCurrentText("저규격");self.condition.setCurrentText("보통");self.arterial.setCurrentText("자동");self.bus.setValue(0);self.access.setValue(0);self.crossing.setValue(0);self.period.setValue(.25);self.base.setValue(2200);self.sat.setValue(1);self.queue.setValue(0);self.coordinated.setChecked(False);self.pf.setValue(0);self.fcw.setValue(0)
     def apply_to_segment(self):
         s=self.segment;s.functional_class=self.functional.currentText();s.road_condition_override=self.condition.currentText();s.arterial_type_override=self.arterial.currentText();s.bus_stops=self.bus.value();s.access_points=self.access.value();s.crossing_signals=self.crossing.value();s.analysis_period_h=self.period.value();s.base_saturation_flow=self.base.value();s.saturation_adjustment=self.sat.value();s.initial_queue=float(self.queue.value());s.coordinated=self.coordinated.isChecked();s.pf_override=self.pf.value() or None;s.fcw_override=self.fcw.value() or None
@@ -787,7 +807,7 @@ class InputPage(QWidget):
         self.change_notice=QLabel();self.change_notice.setObjectName("changeNotice");self.change_notice.hide();root.addWidget(self.change_notice)
         self.compare_bar=QLabel();self.compare_bar.setObjectName("compareBar");self.compare_bar.hide();root.addWidget(self.compare_bar)
         self.road_tabs=QTabWidget();self.road_tabs.setObjectName("connectedTabs");self.road_tabs.tabBar().setObjectName("contentTabBar");self.external=self._make_table();self.internal=self._make_table();external_page=make_card("외부도로",self.external);external_page.setObjectName("tabContentCard");internal_page=make_card("내부도로",self.internal);internal_page.setObjectName("tabContentCard");self.road_tabs.addTab(external_page,"외부도로");self.road_tabs.addTab(internal_page,"내부도로");root.addWidget(self.road_tabs,1)
-        buttons=QHBoxLayout();self.add=QPushButton("구간 추가 (Ctrl++)");self.copy=QPushButton("복사 (Ctrl+C)");self.paste=QPushButton("붙여넣기 (Ctrl+V)");self.delete=QPushButton("구간 삭제 (Ctrl+Del)");self.reset=QPushButton("입력 초기화");self.diagram_button=QPushButton("구간 연결 관계도 (F6)");self.optional=QPushButton("보조 입력 (F7)");self.import_intersection_los=QPushButton("교차로 LOS 불러오기");self.import_intersection_los.setObjectName("excelButton");self.import_intersection_los.setIcon(excel_action_icon("excel"));self.import_intersection_los.setIconSize(QSize(16,16))
+        buttons=QHBoxLayout();self.add=QPushButton("구간 추가 (Ctrl++)");self.copy=QPushButton("복사 (Ctrl+C)");self.paste=QPushButton("붙여넣기 (Ctrl+V)");self.delete=QPushButton("구간 삭제 (Ctrl+Del)");self.reset=QPushButton("입력 초기화");self.diagram_button=QPushButton("관계도 (F6)");self.optional=QPushButton("보조 입력 (F7)");self.import_intersection_los=QPushButton("교차로 LOS 가져오기");self.import_intersection_los.setObjectName("excelButton");self.import_intersection_los.setIcon(excel_action_icon("excel"));self.import_intersection_los.setIconSize(QSize(16,16))
         for button,icon_name in ((self.add,"add"),(self.copy,"copy"),(self.paste,"paste"),(self.delete,"trash"),(self.diagram_button,"network")):
             button.setIcon(symbol(icon_name));button.setIconSize(QSize(16,16))
         self._action_buttons=(self.add,self.copy,self.paste,self.delete,self.reset,self.diagram_button,self.optional,self.import_intersection_los)
@@ -938,7 +958,7 @@ class InputPage(QWidget):
         for c,value in enumerate(values):
             item=QTableWidgetItem(str(value));item.setData(Qt.UserRole,s.uid if c==0 else None);item.setData(Qt.UserRole+1,s.comparison_id if c==0 else None);item.setTextAlignment((Qt.AlignRight if c in self.NUMERIC and c!=8 else Qt.AlignCenter)|Qt.AlignVCenter)
             if c==0:item.setFlags(Qt.ItemIsEnabled|Qt.ItemIsUserCheckable|Qt.ItemIsSelectable);item.setCheckState(Qt.Unchecked)
-            if c==16:item.setData(Qt.UserRole+7,detail_is_modified(s));item.setToolTip("기본값과 다른 상세조건이 있습니다." if detail_is_modified(s) else "구간별 상세조건")
+            if c==16:item.setData(Qt.UserRole+7,detail_is_modified(s));item.setToolTip("기본값과 다른 설정이 있습니다." if detail_is_modified(s) else "상세 설정")
             if c in self.READONLY:item.setFlags(item.flags()&~Qt.ItemIsEditable)
             if c in (14,15):item.setBackground(QColor("#DDF4FF"));item.setForeground(QColor("#075985"))
             if c in OPTIONAL_COLUMN_COLORS:item.setBackground(QColor(OPTIONAL_COLUMN_COLORS[c][1]));item.setForeground(QColor("#414B67"))
@@ -1133,7 +1153,7 @@ class InputPage(QWidget):
             QMessageBox.warning(self,"교차로 LOS 불러오기","프로젝트의 상황·연도와 일치하는 교차로 LOS를 찾지 못했습니다.\n\nExcel에서 확인된 구분: "+available);return
         lines=[f"{self.tab_label(key)}: {matched_by_key.get(key,0)}개 연결" for key in self.project.tab_keys() if key in group_by_key]
         if missing:lines.append(f"일치하지 않음: {len(missing)}개\n"+"\n".join(missing[:8])+("\n…" if len(missing)>8 else ""))
-        box=QMessageBox(self);box.setWindowTitle("교차로 LOS 불러오기 확인");box.setIcon(QMessageBox.Question);box.setText("도착교차로를 기준으로 다음 참고값을 입력합니다.\n\n"+"\n".join(lines));box.setStandardButtons(QMessageBox.Yes|QMessageBox.Cancel);box.button(QMessageBox.Yes).setText("불러오기");box.button(QMessageBox.Cancel).setText("취소");box.setDefaultButton(QMessageBox.Yes)
+        box=QMessageBox(self);box.setWindowTitle("교차로 LOS 가져오기");box.setIcon(QMessageBox.Question);box.setText("도착교차로를 기준으로 다음 참고값을 입력합니다.\n\n"+"\n".join(lines));box.setStandardButtons(QMessageBox.Yes|QMessageBox.Cancel);box.button(QMessageBox.Yes).setText("가져오기");box.button(QMessageBox.Cancel).setText("취소");box.setDefaultButton(QMessageBox.Yes)
         if box.exec()!=QMessageBox.Yes:return
         resolved=str(Path(path).resolve())
         for segment,record,group in assignments:segment.intersection_los=record.los
@@ -1563,7 +1583,7 @@ class Workflow(QWidget):
                 self._pending_analysis_index=index;self._pending_analysis_context=(self.project,self.input.current_key);self.input.request_link_refresh();return
             errors=[s for s in self.project.segments if s.volume_link_error or s.phf_link_error]
             if errors:
-                box=QMessageBox(self);box.setWindowTitle("Excel 연결 오류 확인");box.setIcon(QMessageBox.Warning);box.setText(f"Excel 연결 오류 {len(errors)}건이 있습니다. 마지막 정상값으로 분석을 계속하시겠습니까?");box.setInformativeText("분석 결과 화면에도 주의 문구와 오류 행이 표시됩니다.");box.setStandardButtons(QMessageBox.Ok|QMessageBox.Cancel);box.button(QMessageBox.Ok).setText("마지막 정상값으로 분석");box.button(QMessageBox.Cancel).setText("입력 확인");box.setDefaultButton(QMessageBox.Cancel)
+                box=QMessageBox(self);box.setWindowTitle("Excel 연결 오류 확인");box.setIcon(QMessageBox.Warning);box.setText(f"Excel 연결 오류 {len(errors)}건이 있습니다. 마지막 정상값으로 분석할까요?");box.setInformativeText("오류가 있는 행은 분석 결과에 표시됩니다.");box.setStandardButtons(QMessageBox.Ok|QMessageBox.Cancel);box.button(QMessageBox.Ok).setText("마지막 정상값으로 분석");box.button(QMessageBox.Cancel).setText("입력 확인");box.setDefaultButton(QMessageBox.Cancel)
                 if box.exec()!=QMessageBox.Ok:return
         if index>=1:self.results=self.project.analyze_all();self.results_page.refresh(self.project,self.results)
         if index==2:self.detail_page.refresh(self.project,self.results)
@@ -1580,7 +1600,7 @@ class UserGuideDialog(QDialog):
             "2026 분석":"""<h2>2026 도로용량편람 (베타)</h2><p>설정 → 분석 기준에서 선택합니다. 2026 분석의 지침·계산식 탭에서 적용 조건과 입력 방법을 확인하세요.</p><p>2013 자료와 2026 자료는 별도로 저장됩니다. 접근지체는 별도 분석 결과를 입력하며, 2013 지체를 자동 적용하지 않습니다.</p>""",
             "빠른 시작":"""<h2>기본 분석 순서</h2><ol><li>현황 탭에서 가로명과 양쪽 교차로를 입력합니다.</li><li>구간길이, 차로수, 주기, 녹색시간, 교통량과 PHF를 입력합니다.</li><li>필요하면 분석 탭을 추가하고 현황 자료를 기준으로 수정합니다.</li><li><b>분석 결과</b>에서 평균통행속도와 서비스수준을 확인합니다.</li><li>세부 계산결과와 입력 경고를 검토한 뒤 프로젝트를 저장합니다.</li></ol><p>Enter·Tab으로 다음 입력 셀, Shift+Enter·Shift+Tab으로 이전 셀로 이동합니다.</p>""",
             "Excel 연결":"""<h2>Excel 셀 연결</h2><p><b>Excel 연결</b>에서 현재 분석 탭의 파일과 시트를 연결합니다. 교통량 또는 PHF 셀의 Excel 아이콘이나 <b>=</b> 키를 누르면 원본이 열립니다.</p><ol><li>Excel에서 셀 또는 범위를 선택합니다.</li><li>Enter를 누르면 주소와 저장된 숫자값을 가져오고 연결용 Excel 창이 닫힙니다.</li><li>교통량은 여러 셀·범위의 합계를 사용할 수 있고 PHF는 한 셀만 연결할 수 있습니다.</li></ol><p>주소창에 H12, H12:H15, H12,H15처럼 직접 입력할 수도 있습니다. 원본 값을 바꾼 뒤 저장하고 F5를 누르면 화면의 연결값을 갱신합니다.</p><p>초록 아이콘은 정상, 회색은 수기 입력, 황색은 확인 필요, 빨강은 연결 오류를 뜻합니다.</p>""",
-            "입력과 검토":"""<h2>입력표</h2><ul><li>한 구간은 두 방향 행으로 구성되며, 공통 교차로 정보는 병합해 표시합니다.</li><li>교차로 번호와 이름은 프로젝트 안에서 서로 동기화됩니다.</li><li>도착교차로가 같으면 주기와 PHF 연결정보를 공유하지만 녹색시간은 방향별로 유지합니다.</li><li>PHF는 0.00~1.00, 편도 차로수는 최대 10이며 녹색시간은 주기를 넘을 수 없습니다.</li><li>F7 보조 입력에는 보고서용 길이·교통량, 참고 LOS와 표지판 제한속도를 입력합니다.</li><li>교차로 LOS 불러오기는 정리 Excel의 상황·연도와 도착교차로를 대조해 참고값을 일괄 입력합니다.</li></ul><p>구간 연결 관계도(F6)에서 노드와 가로 연결관계를 확인하고, 선을 누르면 입력표의 해당 구간이 선택됩니다.</p>""",
+            "입력과 검토":"""<h2>입력표</h2><ul><li>한 구간은 두 방향 행으로 구성되며, 공통 교차로 정보는 병합해 표시합니다.</li><li>교차로 번호와 이름은 프로젝트 안에서 서로 동기화됩니다.</li><li>도착교차로가 같으면 주기와 PHF 연결정보를 공유하지만 녹색시간은 방향별로 유지합니다.</li><li>PHF는 0.00~1.00, 편도 차로수는 최대 10이며 녹색시간은 주기를 넘을 수 없습니다.</li><li>F7 보조 입력에는 보고서용 길이·교통량, 참고 LOS와 표지판 제한속도를 입력합니다.</li><li>교차로 LOS 가져오기는 정리 Excel의 상황·연도와 도착교차로를 대조해 참고값을 일괄 입력합니다.</li></ul><p>구간 연결 관계도(F6)에서 노드와 가로 연결관계를 확인하고, 선을 누르면 입력표의 해당 구간이 선택됩니다.</p>""",
             "결과와 저장":"""<h2>결과 확인</h2><p>분석 결과에는 도로유형, 구간거리, 교통량, 평균통행속도와 LOS가 표시됩니다. 상세 계산에서는 편람 공식에 사용된 중간값을 확인할 수 있습니다.</p><ul><li>보고서 교통량이 비어 있으면 분석 교통량을 그대로 사용합니다.</li><li>Excel 연결 오류가 있으면 마지막 정상값을 유지하되 결과 화면에 경고합니다.</li><li>Ctrl+Z는 되돌리기, Ctrl+Y는 다시 실행입니다.</li><li>변경 기록은 프로젝트와 함께 저장되며 다른 이름으로 저장해도 유지됩니다.</li></ul>""",
             "문제 해결":"""<h2>자주 확인할 사항</h2><ul><li><b>Excel 값이 갱신되지 않음:</b> 원본을 저장한 뒤 F5를 누르세요.</li><li><b>연결 오류:</b> 원본 경로와 시트명, 셀 주소를 확인하거나 Ctrl+H로 선택한 연결의 경로를 일괄 변경하세요.</li><li><b>입력값이 분석되지 않음:</b> 필수 숫자칸과 양쪽 교차로가 모두 입력되었는지 확인하세요.</li><li><b>화면에서 열이 보이지 않음:</b> 아래 가로 스크롤바를 사용하거나 F7로 보조 입력을 접으세요.</li></ul><p>분석 결과는 입력자료와 적용 조건에 따라 달라지므로 최종 성과품 작성 전 세부 계산결과를 검토해야 합니다.</p>""",
         }
@@ -1657,6 +1677,12 @@ class MainWindow(QMainWindow):
         if "b" not in APP_VERSION and QGuiApplication.platformName().lower()!="offscreen":QTimer.singleShot(2500,self,lambda:self.updater.check(False))
         QShortcut(QKeySequence("Ctrl+T"),self,activated=self.add_tab_shortcut);QShortcut(QKeySequence("Ctrl+PgDown"),self,activated=lambda:self.move_analysis_tab(1));QShortcut(QKeySequence("Ctrl+PgUp"),self,activated=lambda:self.move_analysis_tab(-1));QShortcut(QKeySequence("Ctrl+Z"),self,activated=self.undo_project);QShortcut(QKeySequence("Ctrl+Y"),self,activated=self.redo_project);QShortcut(QKeySequence("Ctrl+Shift+Z"),self,activated=self.redo_project);self.history_toggle=QPushButton("변경 기록");self.history_toggle.setObjectName("historyToggle");self.history_toggle.clicked.connect(self.toggle_history);self.statusBar().addPermanentWidget(self.history_toggle);self.history_dock.visibilityChanged.connect(lambda visible:self.history_toggle.setVisible(not visible));self.statusBar().showMessage(f"{APP_NAME} v{APP_VERSION}   ·   {APP_AUTHOR}   ·   {APP_EMAIL}");self._last_snapshot=self.snapshot();self._saved_snapshot=self._last_snapshot;self.refresh_history();self.set_theme_mode(self.theme_mode,False)
     def eventFilter(self,watched,event):
+        # Let the enclosing table or page scroll instead of stepping a numeric editor.
+        if event.type() == QEvent.Wheel and isinstance(watched, QWidget):
+            editor = watched.parentWidget() if isinstance(watched, QLineEdit) else watched
+            if isinstance(editor, QAbstractSpinBox):
+                event.ignore()
+                return True
         # Catch file drops over editors and table viewports as well as the window.
         # Text-only drags retain their normal editing behavior.
         if event.type() in (QEvent.DragEnter,QEvent.DragMove,QEvent.Drop) and isinstance(watched,QWidget) and watched.window() is self and event.mimeData().hasUrls():
@@ -1834,10 +1860,10 @@ class MainWindow(QMainWindow):
                 mtime=Path(path).stat().st_mtime
                 if info.get("source_mtime") not in (None,mtime):info["source_mtime"]=mtime;QTimer.singleShot(0,self.workflow.input.request_link_refresh)
         return result
-    def update_title(self):self.setWindowTitle(f"{APP_NAME} · {self.project.analysis_edition} v{APP_VERSION}{' *' if self.dirty else ''}"+(f" - {Path(self.path).name}" if self.path else ""))
+    def update_title(self):self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}{' *' if self.dirty else ''}"+(f" - {Path(self.path).name}" if self.path else ""))
     def confirm_discard(self):
         if not self.dirty:return True
-        box=QMessageBox(self);box.setWindowTitle("저장 확인");box.setText("분석 결과와 변경사항이 저장되지 않았습니다. 지금 저장하시겠습니까?");box.setStandardButtons(QMessageBox.Save|QMessageBox.Discard|QMessageBox.Cancel);box.button(QMessageBox.Save).setText("저장");box.button(QMessageBox.Discard).setText("저장 안 함");box.button(QMessageBox.Cancel).setText("취소");answer=box.exec();return bool(self.save()) if answer==QMessageBox.Save else answer==QMessageBox.Discard
+        box=QMessageBox(self);box.setWindowTitle("저장 확인");box.setText("변경사항을 저장할까요?");box.setStandardButtons(QMessageBox.Save|QMessageBox.Discard|QMessageBox.Cancel);box.button(QMessageBox.Save).setText("저장");box.button(QMessageBox.Discard).setText("저장 안 함");box.button(QMessageBox.Cancel).setText("취소");answer=box.exec();return bool(self.save()) if answer==QMessageBox.Save else answer==QMessageBox.Discard
     def closeEvent(self,event):
         focus=QApplication.focusWidget()
         if focus:focus.clearFocus()
@@ -1852,6 +1878,10 @@ class MainWindow(QMainWindow):
 
 
 FAST_STYLE=STYLE+"""
+QPushButton#backButton{background:#EEF1F5;border-color:#D0D5DD}
+QPushButton#backButton:hover{background:#E2E8F0;border-color:#98A9C3}
+QPushButton#backButton:pressed{background:#D4DDE9}
+QLabel#calculatedValue{background:#EEF1F5;color:#344054;border-radius:7px;padding:6px 8px}
 QFrame#inputTitleBand{background:#FFFFFF;border:0;border-bottom:1px solid #EAECF0}
 QFrame#inputContent{background:#FFFFFF;border:0}
 QFrame#analysisSheet{background:#EEF2F7;border:1px solid #D8E1EE;border-top-left-radius:0;border-top-right-radius:10px;border-bottom-left-radius:10px;border-bottom-right-radius:10px}
@@ -1898,7 +1928,11 @@ QDockWidget#historyDock::title{background:#F7F9FC;padding:8px;border-bottom:1px 
 QPushButton#historyToggle{padding:4px 10px;border-radius:8px;background:#E8F0FD;color:#0F3675;border:1px solid #B8C9E3}
 QPushButton:disabled{background:#EAECF0;color:#98A2B3;border-color:#EAECF0}
 """
-DARK_STYLE=FAST_STYLE+"""
+DARK_STYLE=FAST_STYLE.replace("combo-chevron.svg", "combo-chevron-dark.svg")+"""
+QPushButton#backButton{background:#303B4C;border-color:#546379;color:#F2F4F7}
+QPushButton#backButton:hover{background:#3D4C63;border-color:#77A4ED}
+QPushButton#backButton:pressed{background:#29364A}
+QLabel#calculatedValue{background:#293342;color:#E4E7EC}
 QWidget{color:#F2F4F7} QMainWindow,QStackedWidget{background:#151A23}
 QDialog,QMessageBox,QFileDialog{background:#151A23;color:#F2F4F7} QDialog QLabel,QMessageBox QLabel,QFileDialog QLabel{color:#F2F4F7} QTextEdit,QTextBrowser{background:#1E2633;color:#F2F4F7;border-color:#344054}
 QMenuBar{background:#1A212C;color:#F2F4F7} QMenuBar::item{color:#F2F4F7} QMenuBar::item:selected{background:#263A59;color:#B9D2FA} QMenu{background:#1E2633;color:#F2F4F7;border-color:#344054} QMenu::item{color:#F2F4F7} QMenu::item:selected{background:#263A59;color:#B9D2FA}

@@ -26,6 +26,44 @@ class EditionUiTest(unittest.TestCase):
         self.assertFalse(page.analyze())
         self.assertIn("확인",page.result.toPlainText())
 
+    def test_only_inputs_for_selected_speed_method_are_shown(self):
+        page = self.window.beta_page
+        self.window.project.corridors_2026 = [official_example(2).to_dict()]
+        page.load_project(self.window.project)
+        for index, show_time, show_speed, show_delay in (
+            (0, False, False, True),
+            (1, True, False, False),
+            (2, False, True, False),
+            (0, False, False, True),
+        ):
+            page.method.setCurrentIndex(index)
+            self.assertEqual(page.method_form.isRowVisible(page.times), show_time)
+            self.assertEqual(page.method_form.isRowVisible(page.speeds), show_speed)
+            self.assertEqual(not page.table.isColumnHidden(5), show_delay)
+        self.assertEqual(page.table.cellWidget(0, 5).value(), 44.5)
+
+    def test_wheel_keeps_numeric_cells_and_dialog_fields_unchanged(self):
+        from PySide6.QtCore import QPoint, QPointF, Qt
+        from PySide6.QtGui import QWheelEvent
+        from PySide6.QtTest import QTest
+        from arterial_analysis.app_fast import FastDetailDialog
+
+        w = self.window
+        page = w.beta_page
+        w.project.corridors_2026 = [official_example(2).to_dict()]
+        page.load_project(w.project)
+        dialog = FastDetailDialog(w.project.segments[0], w.project, w)
+        for field in (page.table.cellWidget(0, 1), dialog.base):
+            original = field.value()
+            field.setFocus()
+            for target in (field, field.lineEdit()):
+                event = QWheelEvent(QPointF(), QPointF(), QPoint(), QPoint(0, 120),
+                                    Qt.NoButton, Qt.NoModifier, Qt.ScrollUpdate, False)
+                APP.sendEvent(target, event)
+                self.assertEqual(field.value(), original)
+            QTest.keyClick(field, Qt.Key_Up)
+            self.assertGreater(field.value(), original)
+
     def test_reorder_preserves_delay_and_capacity(self):
         w=self.window;w.project.corridors_2026=[official_example().to_dict()];w.beta_page.load_project(w.project)
         page=w.beta_page;page.table.cellWidget(0,6).setValue(1500);page.table.selectRow(0);page.move_row(1)

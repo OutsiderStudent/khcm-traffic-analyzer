@@ -11,7 +11,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, QStandardPaths, QUrl
+from PySide6.QtCore import QObject, QProcess, QStandardPaths, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog, QWidget
@@ -21,6 +21,7 @@ REPOSITORY = "OutsiderStudent/khcm-traffic-analyzer"
 RELEASES_URL = f"https://github.com/{REPOSITORY}/releases/latest"
 UPDATE_MANIFEST_URL = f"https://github.com/{REPOSITORY}/releases/latest/download/update.json"
 ASSET_PREFIX = "KHCM-Traffic-Analyzer"
+CHECK_TITLE = "업데이트 확인"
 
 
 def _native_windows_machine() -> str:
@@ -161,11 +162,13 @@ class UpdateController(QObject):
         self._download_path: Path | None = None
         self._release: ReleaseInfo | None = None
         self._progress: QProgressDialog | None = None
+        self._checking: QProgressDialog | None = None
 
     def check(self, manual: bool = False) -> None:
         if self._reply is not None:
-            if manual:
-                QMessageBox.information(self.parent_widget, "업데이트", "이미 업데이트를 확인하고 있습니다.")
+            if manual and self._progress is None and self._checking is None:
+                self._manual = True
+                self._show_checking()
             return
         self._manual = manual
         request = QNetworkRequest(QUrl(UPDATE_MANIFEST_URL))
@@ -175,16 +178,30 @@ class UpdateController(QObject):
         request.setTransferTimeout(15_000)
         self._reply = self.network.get(request)
         self._reply.finished.connect(self._check_finished)
+        if manual:
+            self._show_checking()
+
+    def _show_checking(self) -> None:
+        self._checking = QProgressDialog("업데이트 확인 중…", "취소", 0, 0, self.parent_widget)
+        self._checking.setWindowTitle(CHECK_TITLE)
+        self._checking.canceled.connect(self._reply.abort)
+        self._checking.show()
 
     def _check_finished(self) -> None:
         reply, self._reply = self._reply, None
         if reply is None:
             return
+        if self._checking is not None:
+            self._checking.hide()
+            self._checking.deleteLater()
+            self._checking = None
         try:
+            if reply.error() == QNetworkReply.NetworkError.OperationCanceledError:
+                return
             if reply.error() != QNetworkReply.NetworkError.NoError:
                 status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
                 detail = f" (오류 코드: {status})" if status else ""
-                raise RuntimeError("업데이트 서버에 연결하지 못했습니다. 인터넷 연결을 확인한 뒤 잠시 후 다시 시도해 주세요." + detail)
+                raise RuntimeError("업데이트를 확인할 수 없습니다. 인터넷 연결을 확인해 주세요." + detail)
             release = parse_release(bytes(reply.readAll()), self.architecture)
             current = version_tuple(self.current_version)
             latest = version_tuple(release.version)
@@ -192,32 +209,30 @@ class UpdateController(QObject):
                 raise ValueError("버전을 비교할 수 없습니다.")
             if latest <= current:
                 if self._manual:
-                    QMessageBox.information(self.parent_widget, "업데이트", f"현재 v{self.current_version}이 최신 버전입니다.")
+                    QMessageBox.information(self.parent_widget, CHECK_TITLE, "업데이트가 없습니다.")
                 return
             self._offer(release)
         except (ValueError, RuntimeError, json.JSONDecodeError) as error:
             if self._manual:
-                QMessageBox.warning(self.parent_widget, "업데이트 확인 실패", str(error))
+                QMessageBox.warning(self.parent_widget, CHECK_TITLE, str(error))
         finally:
             reply.deleteLater()
 
     def _offer(self, release: ReleaseInfo) -> None:
         box = QMessageBox(self.parent_widget)
         box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle("업데이트")
-        box.setText(f"KHCM Traffic Analyzer v{release.version} 업데이트가 있습니다.")
+        box.setWindowTitle(CHECK_TITLE)
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setText(f"새 버전이 있습니다. (v{release.version})")
         notes = release.notes.strip()
-        if len(notes) > 900:
-            notes = notes[:900].rstrip() + "…"
+        if len(notes) > 240:
+            notes = notes[:240].rstrip() + "…"
         box.setInformativeText(notes)
-        install = box.addButton("다운로드 및 업데이트", QMessageBox.ButtonRole.AcceptRole)
-        page = box.addButton("GitHub 릴리스", QMessageBox.ButtonRole.ActionRole)
-        box.addButton("나중에", QMessageBox.ButtonRole.RejectRole)
+        install = box.addButton("업데이트", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
         box.exec()
         if box.clickedButton() is install:
             self._start_download(release)
-        elif box.clickedButton() is page:
-            QDesktopServices.openUrl(QUrl(release.page_url))
 
     def _start_download(self, release: ReleaseInfo) -> None:
         if not release.asset_url:
@@ -235,8 +250,8 @@ class UpdateController(QObject):
         self._reply.readyRead.connect(self._write_download_data)
         self._reply.downloadProgress.connect(self._download_progress)
         self._reply.finished.connect(self._download_finished)
-        self._progress = QProgressDialog("업데이트를 다운로드하고 있습니다.", "취소", 0, max(0, release.size), self.parent_widget)
-        self._progress.setWindowTitle("업데이트")
+        self._progress = QProgressDialog("다운로드 중…", "취소", 0, max(0, release.size), self.parent_widget)
+        self._progress.setWindowTitle(CHECK_TITLE)
         self._progress.setWindowModality(self.parent_widget.windowModality())
         self._progress.canceled.connect(self._reply.abort)
         self._progress.show()
@@ -259,11 +274,16 @@ class UpdateController(QObject):
             self._download_file.close()
             self._download_file = None
         if self._progress is not None:
-            self._progress.close()
+            self._progress.hide()
+            self._progress.deleteLater()
             self._progress = None
         try:
+            if reply is not None and reply.error() == QNetworkReply.NetworkError.OperationCanceledError:
+                if self._download_path is not None:
+                    self._download_path.unlink(missing_ok=True)
+                return
             if reply is None or reply.error() != QNetworkReply.NetworkError.NoError:
-                raise RuntimeError(reply.errorString() if reply is not None else "다운로드 응답이 없습니다.")
+                raise RuntimeError("다운로드하지 못했습니다. 인터넷 연결을 확인해 주세요.")
             if self._download_path is None or self._release is None:
                 raise RuntimeError("다운로드 파일 정보가 없습니다.")
             self._verify_download(self._download_path, self._release)
@@ -279,35 +299,36 @@ class UpdateController(QObject):
     @staticmethod
     def _verify_download(path: Path, release: ReleaseInfo) -> None:
         if not release.digest.lower().startswith("sha256:"):
-            raise ValueError("릴리스에 SHA-256 검증값이 없어 업데이트를 중단했습니다.")
+            raise ValueError("업데이트 파일을 확인할 수 없습니다.")
         expected = release.digest.split(":", 1)[1].lower()
         digest = hashlib.sha256()
         with path.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
         if digest.hexdigest().lower() != expected:
-            raise ValueError("다운로드한 파일의 SHA-256 검증에 실패했습니다.")
+            raise ValueError("다운로드한 파일을 확인할 수 없습니다. 다시 시도해 주세요.")
 
     def _install_download(self, source: Path, release: ReleaseInfo) -> None:
         if not getattr(sys, "frozen", False):
             QDesktopServices.openUrl(QUrl(release.page_url))
-            QMessageBox.information(self.parent_widget, "업데이트", "개발 실행 중이므로 GitHub 릴리스를 열었습니다.")
+            source.unlink(missing_ok=True)
             return
         current = Path(sys.executable).resolve()
-        choice = QMessageBox.question(
-            self.parent_widget,
-            "업데이트 준비 완료",
-            f"v{release.version} 다운로드와 검증이 완료되었습니다.\n지금 재시작하여 업데이트할까요?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        if choice != QMessageBox.StandardButton.Yes:
+        box = QMessageBox(self.parent_widget)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("다운로드 완료")
+        box.setText("프로그램을 다시 시작할까요?")
+        yes = box.addButton("예", QMessageBox.ButtonRole.YesRole)
+        no = box.addButton("아니요", QMessageBox.ButtonRole.NoRole)
+        box.setDefaultButton(yes)
+        box.setEscapeButton(no)
+        box.exec()
+        if box.clickedButton() is not yes:
             source.unlink(missing_ok=True)
             return
         confirm_discard = getattr(self.parent_widget, "confirm_discard", None)
         if callable(confirm_discard) and not confirm_discard():
             source.unlink(missing_ok=True)
-            QMessageBox.information(self.parent_widget, "업데이트", "업데이트 재시작을 취소했습니다.")
             return
         downloads = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation))
         fallback = downloads / f"{ASSET_PREFIX}_v{release.version}_{self.architecture}.exe"

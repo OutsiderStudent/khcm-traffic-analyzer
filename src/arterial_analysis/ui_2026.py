@@ -64,7 +64,7 @@ class CorridorPage(QWidget):
         self.connection_start = None
         self.selected_node = None
         root = QVBoxLayout(self)
-        title = QLabel("도시부 간선도로 · 2026 도로용량편람 (베타)")
+        title = QLabel("도시부 간선도로")
         title.setObjectName("cardTitle")
         root.addWidget(title)
         bar = QHBoxLayout()
@@ -73,8 +73,8 @@ class CorridorPage(QWidget):
         root.addLayout(bar)
         toolbar=QGridLayout()
         tool_index=0
-        for label, callback in (("구간 추가", self.add_corridor), ("다른 대안에 복사", self.copy_corridor), ("반대 방향 복사", self.reverse_corridor), ("구간 삭제", self.remove_corridor),
-                                ("편람 예제", self.add_examples), ("기존 자료 가져오기", self.import_legacy)):
+        for label, callback in (("구간 추가", self.add_corridor), ("대안 복사", self.copy_corridor), ("반대 방향 복사", self.reverse_corridor), ("구간 삭제", self.remove_corridor),
+                                ("편람 예제", self.add_examples), ("2013 자료 가져오기", self.import_legacy)):
             button = QPushButton(label); button.clicked.connect(callback); toolbar.addWidget(button,tool_index//3,tool_index%3);tool_index+=1
         root.addLayout(toolbar)
         self.tabs = QTabWidget(); self.tabs.setObjectName("connectedTabs")
@@ -108,14 +108,18 @@ class CorridorPage(QWidget):
         for checkbox in (self.urban,self.signals,self.boundaries):layout.addWidget(checkbox);checkbox.toggled.connect(self.commit)
         scope_note=QLabel("편람 적용 조건: 길이 1.5km 이상 · 신호 3개 이상 · 평균 신호 간격 3km 이하 · 편도 기본·직진 차로수 2개 이상")
         scope_note.setWordWrap(True);layout.addWidget(scope_note);layout.addStretch()
-        next_button=QPushButton("소구간·조사자료 입력");next_button.clicked.connect(lambda:self.tabs.setCurrentIndex(1));layout.addWidget(next_button)
-        create_network=QPushButton("관계도에서 교차로 추가·연결 (F6)")
+        next_button=QPushButton("자료 입력");next_button.clicked.connect(lambda:self.tabs.setCurrentIndex(1));layout.addWidget(next_button)
+        create_network=QPushButton("관계도 (F6)")
         create_network.clicked.connect(self.show_diagram);layout.addWidget(create_network)
         data_page=QWidget();layout=QVBoxLayout(data_page);self.tabs.addTab(data_page,"2. 소구간·조사자료")
-        form2=QFormLayout();form2.addRow("속도 산정 방법",self.method);form2.addRow("차량별 통행시간(초)",self.times);form2.addRow("차량별 통행속도(km/h)",self.speeds);layout.addLayout(form2)
-        note = QLabel("진행방향 순서로 소구간을 입력하세요. 시점 신호는 제외하고 종점 신호는 포함합니다.\n"
-                      "평균접근지체는 해당 방향의 직진이동류 값입니다. 교차로 전체 평균지체나 LOS 등급을 입력하지 마세요.")
-        note.setWordWrap(True); layout.addWidget(note)
+        self.method_form = QFormLayout()
+        self.method_form.addRow("속도 산정 방법", self.method)
+        self.method_form.addRow("차량별 통행시간(초)", self.times)
+        self.method_form.addRow("차량별 통행속도(km/h)", self.speeds)
+        layout.addLayout(self.method_form)
+        self.method_note = QLabel()
+        self.method_note.setWordWrap(True)
+        layout.addWidget(self.method_note)
         self.table = QTableWidget(0,9)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setHorizontalHeaderLabels(["종점", "길이\n(m)", "제한속도\n(km/h)", "종점 유형", "직진 가능\n차로수", "평균접근지체\n(초)", "직진 용량\n(대/시, 선택)", "종점 ID\n(선택)", "접근 방향 코드\n(선택)"])
@@ -126,10 +130,15 @@ class CorridorPage(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(36)
         layout.addWidget(self.table,1)
         actions = QHBoxLayout()
+        back = QPushButton("이전")
+        back.setObjectName("backButton")
+        back.setToolTip("구간 설정으로 이동")
+        back.clicked.connect(lambda: self.tabs.setCurrentIndex(0))
+        actions.addWidget(back)
         for label, callback in (("소구간 추가",self.add_row),("소구간 삭제",self.remove_row),("위로",lambda:self.move_row(-1)),("아래로",lambda:self.move_row(1)),("분석",self.analyze)):
             button=QPushButton(label); button.clicked.connect(callback); actions.addWidget(button)
             if label=="분석":button.setObjectName("primaryButton")
-        diagram_button = QPushButton("구간 연결 관계도 (F6)")
+        diagram_button = QPushButton("관계도 (F6)")
         diagram_button.clicked.connect(self.show_diagram)
         actions.addWidget(diagram_button)
         actions.addStretch(); layout.addLayout(actions)
@@ -140,8 +149,14 @@ class CorridorPage(QWidget):
         self.table.currentCellChanged.connect(lambda *_: self.refresh_diagram())
         result_page=QWidget(); result_layout=QVBoxLayout(result_page)
         self.result=QTextBrowser();self.result.setOpenLinks(False);self.result.anchorClicked.connect(self.focus_missing); result_layout.addWidget(self.result)
-        copy=QPushButton("결과 복사"); copy.clicked.connect(self.copy_result)
-        result_actions=QHBoxLayout();result_actions.addWidget(copy);export=QPushButton("결과 저장");export.clicked.connect(self.export_result);result_actions.addWidget(export);result_actions.addStretch();result_layout.addLayout(result_actions); self.tabs.addTab(result_page,"3. 분석 결과")
+        copy=QPushButton("계산 결과 복사"); copy.clicked.connect(self.copy_result)
+        result_actions = QHBoxLayout()
+        back_to_data = QPushButton("이전")
+        back_to_data.setObjectName("backButton")
+        back_to_data.setToolTip("소구간·조사자료로 이동")
+        back_to_data.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
+        result_actions.addWidget(back_to_data)
+        result_actions.addWidget(copy);export=QPushButton("결과 저장");export.clicked.connect(self.export_result);result_actions.addWidget(export);result_actions.addStretch();result_layout.addLayout(result_actions); self.tabs.addTab(result_page,"3. 분석 결과")
         self.selector.currentIndexChanged.connect(self.load_corridor)
         for w in (self.name,self.start,self.start_id,self.times,self.speeds,self.source,self.survey_date):w.textEdited.connect(self.commit)
         for w in (self.scenario,self.category,self.method):w.currentIndexChanged.connect(self.commit)
@@ -172,15 +187,25 @@ class CorridorPage(QWidget):
         self.table.setRowCount(0)
         for s in c.subsegments:self.append_row(s)
         for tab in range(3):self.tabs.setTabEnabled(tab,index>=0)
-        self.times.setEnabled(c.method=="survey");self.speeds.setEnabled(c.method=="speeds")
-        for row in range(self.table.rowCount()):
-            self.table.cellWidget(row,5).setEnabled(c.method=="delay" and self.table.cellWidget(row,3).currentText()!=END_TYPES[2])
-            self.table.cellWidget(row,4).setEnabled(self.table.cellWidget(row,3).currentText()==END_TYPES[0])
-            self.table.cellWidget(row,6).setEnabled(self.table.cellWidget(row,3).currentText()==END_TYPES[0])
-        self.result.setPlainText("입력값을 확인한 뒤 분석을 실행하세요.")
+        self.update_method_fields(c.method)
+        self.result.setPlainText("자료를 입력한 뒤 분석을 눌러 주세요.")
         self.loading=False
         self.refresh_diagram()
         if self.road_dialog and self.road_dialog.isVisible() and not getattr(self.road_dialog,'saving',False):self.road_dialog.load()
+
+    def update_method_fields(self, method):
+        self.method_form.setRowVisible(self.times, method == "survey")
+        self.method_form.setRowVisible(self.speeds, method == "speeds")
+        self.table.setColumnHidden(5, method != "delay")
+        note = "진행 방향 순서대로 소구간을 입력하세요."
+        if method == "delay":
+            note += " 시점 신호는 제외하고 종점 신호는 포함하세요.\n해당 방향의 직진이동류 평균접근지체를 입력하세요."
+        self.method_note.setText(note)
+        for row in range(self.table.rowCount()):
+            end_type = self.table.cellWidget(row, 3).currentText()
+            self.table.cellWidget(row, 5).setEnabled(method == "delay" and end_type != END_TYPES[2])
+            for column in (4, 6):
+                self.table.cellWidget(row, column).setEnabled(end_type == END_TYPES[0])
 
     def append_row(self,s):
         row=self.table.rowCount();self.table.insertRow(row)
@@ -236,12 +261,8 @@ class CorridorPage(QWidget):
         if c.travel_times_s!=[t for t in re.split(r"[,;\s]+",self.times.text().strip()) if t]:self.times.setText(', '.join(map(str,c.travel_times_s)))
         if c.travel_speeds_kmh!=[t for t in re.split(r"[,;\s]+",self.speeds.text().strip()) if t]:self.speeds.setText(', '.join(map(str,c.travel_speeds_kmh)))
         self.selector.setItemText(self.selector.currentIndex(),c.name)
-        self.times.setEnabled(c.method=="survey");self.speeds.setEnabled(c.method=="speeds")
-        for row in range(self.table.rowCount()):
-            self.table.cellWidget(row,5).setEnabled(c.method=="delay" and self.table.cellWidget(row,3).currentText()!=END_TYPES[2])
-            self.table.cellWidget(row,4).setEnabled(self.table.cellWidget(row,3).currentText()==END_TYPES[0])
-            self.table.cellWidget(row,6).setEnabled(self.table.cellWidget(row,3).currentText()==END_TYPES[0])
-        self.result.setPlainText("입력값이 변경되었습니다. 다시 분석하세요.")
+        self.update_method_fields(c.method)
+        self.result.setPlainText("입력이 바뀌었습니다. 다시 분석해 주세요.")
         self.changed.emit()
 
     def show_diagram(self):
@@ -401,10 +422,10 @@ class CorridorPage(QWidget):
         if corridor is None:
             return
         scenarios = [self.scenario.itemText(i) for i in range(self.scenario.count())]
-        scenario, accepted = QInputDialog.getItem(self, "다른 대안에 복사", "분석 상황", scenarios, self.scenario.currentIndex(), False)
+        scenario, accepted = QInputDialog.getItem(self, "대안 복사", "분석 상황", scenarios, self.scenario.currentIndex(), False)
         if not accepted:
             return
-        year, accepted = QInputDialog.getInt(self, "다른 대안에 복사", "분석 연도", corridor.year, 1900, 2200)
+        year, accepted = QInputDialog.getInt(self, "대안 복사", "분석 연도", corridor.year, 1900, 2200)
         if not accepted:
             return
         corridor.scenario = scenario

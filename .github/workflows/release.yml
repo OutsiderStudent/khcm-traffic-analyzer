@@ -65,7 +65,7 @@ jobs:
           $builtExe = Get-ChildItem -LiteralPath dist -Filter '*.exe' | Select-Object -First 1
           if (-not $builtExe) { throw 'Built executable not found.' }
           $version = '${{ github.ref_name }}'
-          if (-not $version.StartsWith('v')) { $version = 'v1.10.0-preview' }
+          if (-not $version.StartsWith('v')) { $version = 'v1.10.1-preview' }
           $releaseAsset = "dist/KHCM-Traffic-Analyzer_${version}_${{ matrix.arch }}.exe"
           Copy-Item -LiteralPath $builtExe.FullName -Destination $releaseAsset
       - uses: actions/upload-artifact@v4
@@ -129,4 +129,7 @@ jobs:
         run: |
           $assets = Get-ChildItem -LiteralPath release-assets | Where-Object { $_.Extension -in '.exe', '.json' } | ForEach-Object { $_.FullName }
           if ($assets.Count -ne 4) { throw "Expected 4 release assets, got $($assets.Count)." }
-          gh release create "${{ github.ref_name }}" @assets --generate-notes --title "KHCM Traffic Analyzer ${{ github.ref_name }}"
+          $manifest = Get-Content -LiteralPath release-assets/update.json -Raw -Encoding UTF8 | ConvertFrom-Json
+          $notesPath = Join-Path $env:RUNNER_TEMP 'khcm-release-notes.md'
+          [IO.File]::WriteAllText($notesPath, $manifest.notes, [Text.UTF8Encoding]::new($false))
+          gh release create "${{ github.ref_name }}" @assets --notes-file $notesPath --title "KHCM Traffic Analyzer ${{ github.ref_name }}"
