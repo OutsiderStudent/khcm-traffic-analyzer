@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from .engine import AnalysisResult, AnalysisSettings, ROAD_CATEGORIES, SegmentInput, analyze_segment
+from .engine_2026 import Corridor2026, Result2026, analyze_corridor
 
 
 SCENARIOS = ("현황", "사업 미시행시", "사업 시행시", "개선대책 이행시")
@@ -14,6 +15,9 @@ SCENARIOS = ("현황", "사업 미시행시", "사업 시행시", "개선대책 
 
 @dataclass
 class ArterialProject:
+    analysis_edition: str = "2013"
+    corridors_2026: list[dict[str, Any]] = field(default_factory=list)
+    networks_2026: list[dict[str, Any]] = field(default_factory=list)
     name: str = "도시·교외간선도로 분석"
     current_year: int = 2026
     future_years: list[int] = field(default_factory=lambda: [2033, 2037])
@@ -111,7 +115,9 @@ class ArterialProject:
         self.analysis_tabs.append(item)
         return item
 
-    def analyze_all(self) -> list[AnalysisResult]:
+    def analyze_all(self) -> list[AnalysisResult] | list[Result2026]:
+        if self.analysis_edition == "2026":
+            return [analyze_corridor(Corridor2026.from_dict(raw)) for raw in self.corridors_2026]
         active = set(self.tab_keys())
         return [
             analyze_segment(row, self.settings)
@@ -130,20 +136,29 @@ class ArterialProject:
     def to_dict(self) -> dict[str, Any]:
         return {
             "format": "arterial-analysis-project",
-            "version": 3,
+            "version": 5,
+            "analysis_edition": self.analysis_edition,
+            "corridors_2026": self.corridors_2026,
+            "networks_2026": self.networks_2026,
             "name": self.name,
             "current_year": self.current_year,
             "future_years": self.future_years,
             "settings": asdict(self.settings),
             "segments": [s.to_dict() for s in self.segments],
-            "source_note": self.source_note,
+            "source_note": "도로용량편람(2026) 제12장 도시부 간선도로" if self.analysis_edition == "2026" else self.source_note,
             "analysis_tabs": self.analysis_tabs,
             "change_log": self.change_log,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ArterialProject":
+        edition = str(data.get("analysis_edition", "2013"))
+        if edition not in ("2013", "2026"):
+            raise ValueError("지원하지 않는 분석 기준입니다.")
         project = cls(
+            analysis_edition=edition,
+            corridors_2026=list(data.get("corridors_2026", [])),
+            networks_2026=list(data.get("networks_2026", [])),
             name=str(data.get("name", "도시·교외간선도로 분석")),
             current_year=int(data.get("current_year", 2026)),
             future_years=[int(y) for y in data.get("future_years", [2033, 2037])],
@@ -156,7 +171,18 @@ class ArterialProject:
         return project
 
     def save(self, path: str | Path) -> None:
-        Path(path).write_text(json.dumps(self.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        import os
+        import tempfile
+        target = Path(path)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent, suffix=".tmp", delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump(self.to_dict(), stream, ensure_ascii=False, indent=2)
+                stream.flush(); os.fsync(stream.fileno())
+            temporary.replace(target)
+        finally:
+            if temporary is not None: temporary.unlink(missing_ok=True)
 
     @classmethod
     def load(cls, path: str | Path) -> "ArterialProject":

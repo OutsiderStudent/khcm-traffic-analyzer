@@ -12,8 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QByteArray, QEvent, QMimeData, QObject, QPointF, QRectF, QRunnable, QSettings, QSize, QThreadPool, QTimer, Qt, Signal, Slot
-from PySide6.QtGui import QAction, QColor, QFont, QGuiApplication, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap, QShortcut
+from PySide6.QtCore import QByteArray, QEvent, QMimeData, QObject, QPointF, QRectF, QRunnable, QSettings, QSize, QThreadPool, QTimer, QStandardPaths, Qt, Signal, Slot
+from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QGuiApplication, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QMainWindow,
     QHeaderView, QInputDialog, QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea, QSpinBox, QStackedWidget, QStyle, QTabBar, QTabWidget, QTableWidgetItem,
@@ -30,10 +30,12 @@ from .project import ArterialProject
 from .intersection_import import match_intersection_los, read_intersection_los
 from .motion import MotionController, TactileProxyStyle
 from .updater import UpdateController
+from .ui_2026 import CorridorPage
+from .icons import symbol
 
 
 APP_NAME = "도시·교외간선도로 분석"
-APP_VERSION = "1.9.3"
+APP_VERSION = "1.10.0"
 PROJECT_FILTER = "간선도로 분석 프로젝트 (*.ara1)"
 SCENARIO_LABEL = {"현황":"현황","사업 미시행시":"미시행","사업 시행시":"시행","개선대책 이행시":"개선"}
 SCENARIO_COLORS = {"현황":"#475569","사업 미시행시":"#2563EB","사업 시행시":"#059669","개선대책 이행시":"#D97706"}
@@ -50,16 +52,16 @@ EXTERNAL, INTERNAL = ROAD_CATEGORIES[0], ROAD_CATEGORIES[2]
 def build_network_graph(segments):
     """양방향 분석행을 교차로 노드와 무방향 가로구간으로 정리한다."""
     nodes={};edges={}
-    def node(number,name):
+    def node(number,name,identity=None):
         number=str(number or "").strip();name=str(name or "").strip()
         if not number and not name:return None
-        key=("번호",number) if number else ("이름",name)
+        key=identity or (("번호",number) if number else ("이름",name))
         saved=nodes.setdefault(key,{"key":key,"number":number,"name":name})
         if number:saved["number"]=number
         if name:saved["name"]=name
         return key
     for segment in segments:
-        start=node(segment.start_number,segment.start_name);end=node(segment.end_number,segment.end_name)
+        start=node(segment.start_number,segment.start_name,getattr(segment,"start_key",None));end=node(segment.end_number,segment.end_name,getattr(segment,"end_key",None))
         if start is None or end is None or start==end:continue
         pair=tuple(sorted((start,end),key=lambda value:(value[0],value[1])))
         edge=edges.setdefault(pair,{"start":pair[0],"end":pair[1],"roads":set(),"categories":set(),"uids":set(),"directions":[]})
@@ -72,12 +74,18 @@ def build_network_graph(segments):
 
 class NetworkDiagramWidget(QWidget):
     edgeSelected=Signal(object)
+    nodeSelected=Signal(object, bool)
+    editing_enabled=False
+    connection_source=None
+    connection_cursor=None
+    selected_node_key=None
     zoomChanged=Signal(int)
+    empty_text="교차로 번호와 교차로명을 입력하면 구간 연결 관계도가 자동으로 표시됩니다."
     def __init__(self,parent=None):
         super().__init__(parent);self.nodes={};self.edges=[];self.title="";self.settings=None;self.highlight_uids=set();self._hit_edges=[];self._arrow_segments=[];self._label_boxes=[];self._layout_signature=None;self._layout={};self._base_size=QSize(700,500);self._zoom=1.0;self.scroll_area=None;self._press_pos=None;self._press_global=None;self._press_edge=None;self._panning=False;self._scroll_start=(0,0);self.setMinimumSize(1,1);self.setMouseTracking(True)
     def set_segments(self,segments,title="",highlight_uid="",settings=None):
         self.nodes,self.edges=build_network_graph(segments);self.title=title;self.settings=settings;self.highlight_uids={str(x) for x in (highlight_uid if isinstance(highlight_uid,(set,list,tuple)) else [highlight_uid]) if x}
-        signature=tuple(sorted((repr(edge["start"]),repr(edge["end"])) for edge in self.edges))
+        signature=(tuple(sorted(map(repr,self.nodes))),tuple(sorted((repr(edge["start"]),repr(edge["end"])) for edge in self.edges)))
         if signature!=self._layout_signature:self._layout_signature=signature;self._layout=self._build_non_crossing_layout()
         count=len(self.nodes);self._base_size=QSize(max(700,720+max(0,count-4)*110),max(460,500+max(0,count-4)*90));self._apply_zoom_size();self.update()
     def _apply_zoom_size(self):
@@ -103,6 +111,7 @@ class NetworkDiagramWidget(QWidget):
         self.scroll_area.horizontalScrollBar().setValue(0);self.scroll_area.verticalScrollBar().setValue(0)
     @staticmethod
     def _metric_text(segment,settings):
+        if hasattr(segment,"metric_text"):return segment.metric_text
         if settings is None:return ""
         volume=max(0,int(round(float(segment.main_volume or 0))))
         try:
@@ -210,12 +219,15 @@ class NetworkDiagramWidget(QWidget):
         dark=self.palette().color(QPalette.Window).lightness()<128;background=QColor("#1E2633" if dark else "#FFFFFF");text_color=QColor("#F2F4F7" if dark else "#334155");muted_color=QColor("#B0BAC8" if dark else "#64748B");label_background=QColor(30,38,51,235) if dark else QColor(255,255,255,232);external_color=QColor("#77A4ED" if dark else "#2563EB");internal_color=QColor("#4ECF8D" if dark else "#059669")
         painter=QPainter(self);painter.setRenderHint(QPainter.Antialiasing);painter.fillRect(self.rect(),background)
         painter.setPen(text_color);title_font=QFont(painter.font());title_font.setBold(True);title_font.setPointSize(11);painter.setFont(title_font);painter.drawText(QRectF(18,12,self.width()-36,28),Qt.AlignLeft|Qt.AlignVCenter,self.title)
-        if not self.edges:
-            painter.setPen(muted_color);body=QFont(painter.font());body.setBold(False);body.setPointSize(10);painter.setFont(body);painter.drawText(QRectF(30,70,self.width()-60,self.height()-100),Qt.AlignCenter|Qt.TextWordWrap,"교차로 번호와 교차로명을 입력하면 구간 연결 관계도가 자동으로 표시됩니다.")
+        if not self.nodes:
+            painter.setPen(muted_color);body=QFont(painter.font());body.setBold(False);body.setPointSize(10);painter.setFont(body);painter.drawText(QRectF(30,70,self.width()-60,self.height()-100),Qt.AlignCenter|Qt.TextWordWrap,self.empty_text)
             return
         painter.setFont(QFont(painter.font().family(),9));painter.setPen(external_color);painter.drawText(QRectF(18,40,150,22),Qt.AlignLeft|Qt.AlignVCenter,"━ 외부도로")
         painter.setPen(internal_color);painter.drawText(QRectF(170,40,150,22),Qt.AlignLeft|Qt.AlignVCenter,"━ 내부도로")
         area=QRectF(58,78,max(100,self.width()-116),max(100,self.height()-145));positions=self._positions(area);label_bounds=QRectF(20,68,max(100,self.width()-40),max(100,self.height()-108))
+        if self.connection_source in positions and self.connection_cursor is not None:
+            painter.setPen(QPen(external_color,2,Qt.DashLine))
+            painter.drawLine(positions[self.connection_source],self.connection_cursor)
         occupied=[QRectF(point.x()-72,point.y()-28,144,82) for point in positions.values()]
         label_font=QFont(painter.font());label_font.setPointSize(9)
         for edge in self.edges:
@@ -248,6 +260,8 @@ class NetworkDiagramWidget(QWidget):
                     painter.fillRect(metric_box,label_background);painter.setFont(metric_font);painter.setPen(text_color);painter.drawText(metric_box,Qt.AlignCenter,painter.fontMetrics().elidedText(metric,Qt.ElideRight,218))
         node_font=QFont(painter.font());node_font.setBold(True);node_font.setPointSize(11);name_font=QFont(painter.font());name_font.setPointSize(8)
         highlighted_nodes=set()
+        if self.editing_enabled and self.selected_node_key in self.nodes:
+            highlighted_nodes.add(self.selected_node_key)
         for edge in self.edges:
             if self.highlight_uids&edge["uids"]:highlighted_nodes.update((edge["start"],edge["end"]))
         for key,point in positions.items():
@@ -268,12 +282,19 @@ class NetworkDiagramWidget(QWidget):
             if distance<=14:candidates.append((distance,edge))
         return min(candidates,key=lambda value:value[0])[1] if candidates else None
     def mousePressEvent(self,event):
+        if self.editing_enabled and event.button()==Qt.LeftButton:
+            area=QRectF(58,78,max(100,self.width()-116),max(100,self.height()-145))
+            for key,point in self._positions(area).items():
+                if math.hypot(point.x()-event.position().x(),point.y()-event.position().y())<=28:
+                    self.nodeSelected.emit(key,bool(event.modifiers()&Qt.ControlModifier));event.accept();return
         if event.button()==Qt.LeftButton:
             self._press_pos=event.position();self._press_global=event.globalPosition();self._press_edge=self._edge_at(event.position());self._panning=False
             if self.scroll_area is not None:self._scroll_start=(self.scroll_area.horizontalScrollBar().value(),self.scroll_area.verticalScrollBar().value())
             event.accept();return
         super().mousePressEvent(event)
     def mouseMoveEvent(self,event):
+        if self.editing_enabled and self.connection_source is not None:
+            self.connection_cursor=event.position();self.update()
         if self._press_pos is not None and event.buttons()&Qt.LeftButton and self.scroll_area is not None:
             delta=event.globalPosition()-self._press_global
             if self._panning or math.hypot(delta.x(),delta.y())>=5:
@@ -309,40 +330,16 @@ class NetworkDiagramDialog(QDialog):
 
 
 def excel_link_icon(status="ok",pressed=False) -> QIcon:
-    pixmap=QPixmap(14,14);pixmap.fill(Qt.transparent);painter=QPainter(pixmap)
     colors={"manual":"#94A3B8","ok":"#107C41","unconfirmed":"#D99A00","last_saved":"#D99A00","error":"#DC2626"}
-    margin=2 if pressed else 0;painter.setRenderHint(QPainter.Antialiasing);painter.setPen(Qt.NoPen);painter.setBrush(QColor(colors.get(status,"#107C41")));painter.drawRoundedRect(margin,margin,14-margin*2,14-margin*2,2,2)
-    font=QFont("Arial",8,QFont.Bold);painter.setFont(font);painter.setPen(QColor("white"));painter.drawText(pixmap.rect(),Qt.AlignCenter,"X");painter.end()
-    return QIcon(pixmap)
+    return symbol("excel", "#084B29" if pressed else colors.get(status,"#107C41"))
 
 
 def excel_action_icon(kind="excel") -> QIcon:
-    """Excel 기능을 한눈에 구분하는 녹색 계열의 작은 동작 아이콘."""
-    pixmap=QPixmap(20,20);pixmap.fill(Qt.transparent);painter=QPainter(pixmap);painter.setRenderHint(QPainter.Antialiasing)
-    green=QColor("#107C41");painter.setPen(Qt.NoPen);painter.setBrush(green);painter.drawRoundedRect(1,2,14,16,2,2)
-    painter.setPen(QPen(QColor("white"),1.8,Qt.SolidLine,Qt.RoundCap));painter.drawLine(5,7,11,13);painter.drawLine(11,7,5,13)
-    painter.setPen(QPen(green,1.8,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin));painter.setBrush(QColor("white"));painter.drawEllipse(12,10,7,7)
-    if kind=="open":painter.drawLine(14,15,18,11);painter.drawLine(16,11,18,11);painter.drawLine(18,11,18,13)
-    elif kind=="apply":painter.drawLine(14,14,16,16);painter.drawLine(16,16,19,12)
-    elif kind=="refresh":painter.drawArc(13,11,5,5,25*16,280*16);painter.drawLine(17,11,19,11);painter.drawLine(19,11,19,13)
-    else:painter.drawLine(14,13,17,13);painter.drawLine(17,13,17,16)
-    painter.end();return QIcon(pixmap)
+    return symbol(kind,"#107C41")
 
 
 def trash_icon(color="#64748B") -> QIcon:
-    """작은 크기에서도 X가 아니라 휴지통으로 읽히는 선형 아이콘."""
-    pixmap=QPixmap(20,20);pixmap.fill(Qt.transparent);painter=QPainter(pixmap);painter.setRenderHint(QPainter.Antialiasing)
-    pen=QPen(QColor(color),1.9,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin);painter.setPen(pen);painter.setBrush(Qt.NoBrush)
-    painter.drawLine(QPointF(4,6),QPointF(16,6))                  # 뚜껑
-    painter.drawLine(QPointF(8,3.5),QPointF(12,3.5))             # 손잡이
-    painter.drawLine(QPointF(8,3.5),QPointF(7.4,6))
-    painter.drawLine(QPointF(12,3.5),QPointF(12.6,6))
-    painter.drawLine(QPointF(5.4,8),QPointF(6.5,16))             # 통 몸체
-    painter.drawLine(QPointF(14.6,8),QPointF(13.5,16))
-    painter.drawLine(QPointF(6.5,16),QPointF(13.5,16))
-    painter.drawLine(QPointF(8.3,9),QPointF(8.7,14))             # 세로 홈
-    painter.drawLine(QPointF(11.7,9),QPointF(11.3,14))
-    painter.end();return QIcon(pixmap)
+    return symbol("trash",color)
 
 
 class HistoryTrashButton(QToolButton):
@@ -355,8 +352,7 @@ class HistoryTrashButton(QToolButton):
 
 
 def collapse_icon(color="#64748B") -> QIcon:
-    pixmap=QPixmap(20,20);pixmap.fill(Qt.transparent);painter=QPainter(pixmap);painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(QPen(QColor(color),2.1,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin));painter.drawLine(QPointF(12.5,5),QPointF(7.5,10));painter.drawLine(QPointF(7.5,10),QPointF(12.5,15));painter.end();return QIcon(pixmap)
+    return symbol("collapse",color)
 
 
 class HistoryCollapseButton(QToolButton):
@@ -405,9 +401,9 @@ class CompactCellComboBox(QComboBox):
         if line_edit is not None:
             line_edit.setGeometry(3,1,max(10,self.width()-23),max(1,self.height()-2))
     def resizeEvent(self,event):
-        super().resizeEvent(event);self._fit_line_edit();QTimer.singleShot(0,self._fit_line_edit)
+        super().resizeEvent(event);self._fit_line_edit();QTimer.singleShot(0,self,self._fit_line_edit)
     def showEvent(self,event):
-        super().showEvent(event);self._fit_line_edit();QTimer.singleShot(0,self._fit_line_edit)
+        super().showEvent(event);self._fit_line_edit();QTimer.singleShot(0,self,self._fit_line_edit)
 
 
 class ElidedLabel(QLabel):
@@ -729,6 +725,36 @@ class LinkReadTask(QRunnable):
         self.signals.finished.emit((*self.context,read_link_groups(self.context[3])))
 
 
+class ExcelSelectionTask(QRunnable):
+    def __init__(self,context):
+        super().__init__()
+        self.context=context
+        self.signals=LinkReadSignals()
+
+    def run(self):
+        window,project,key,uid,kind,previous=self.context
+        try:
+            path,sheet,address,saved=active_selection(window)
+            if not saved:
+                raise ValueError("Excel 원본을 저장한 뒤 셀을 선택하고 Enter를 다시 누르세요.")
+            value,address=read_saved_cell(path,sheet,address,kind)
+            result=(path,sheet,address,value)
+            error=""
+        except Exception as exc:
+            result=None
+            error=str(exc)
+        self.signals.finished.emit((self.context,result,error))
+
+
+class ExcelCloseTask(QRunnable):
+    def __init__(self,window):
+        super().__init__()
+        self.window=window
+
+    def run(self):
+        close_link_window(self.window)
+
+
 class InputPage(QWidget):
     changed=Signal()
     linksRefreshed=Signal()
@@ -740,9 +766,14 @@ class InputPage(QWidget):
         title_band=QFrame();title_band.setObjectName("inputTitleBand");title_layout=QVBoxLayout(title_band);title_layout.setContentsMargins(12,5,12,4);title=QLabel("상황·연도별 분석구간 입력");title.setObjectName("pageTitle");title_layout.addWidget(title);outer.addWidget(title_band)
         content=QFrame();content.setObjectName("inputContent");root=QVBoxLayout(content);root.setContentsMargins(10,4,10,5);root.setSpacing(0);outer.addWidget(content,1)
         self._refresh_generation=0;self._refresh_job=None;self._refresh_pending=False
+        self._selection_job=None;self._link_uid=None
+        app=QApplication.instance()
+        if not hasattr(app,"_excel_close_pool"):
+            app._excel_close_pool=QThreadPool(app);app._excel_close_pool.setMaxThreadCount(1)
+        self._excel_close_pool=app._excel_close_pool
         self._checked_by_context={};self.analysis_tabs=EditableTabBar();self.analysis_tabs.setObjectName("sheetTabs");self.analysis_tabs.setExpanding(False);self.analysis_tabs.setDrawBase(False);root.addWidget(self.analysis_tabs)
         sheet_panel=QFrame();sheet_panel.setObjectName("analysisSheet");sheet_layout=QVBoxLayout(sheet_panel);sheet_layout.setContentsMargins(8,5,8,5);sheet_layout.setSpacing(3);root.addWidget(sheet_panel,1);root=sheet_layout
-        source=QHBoxLayout();source.setSpacing(6);self.source_label=ElidedLabel("Excel 원본: 연결 안 됨");self.source_label.setObjectName("excelSourceLabel");source.addWidget(self.source_label,1);self.choose_source=QPushButton("Excel 원본 선택");self.open_source=QPushButton("원본 열기");self.apply_source=QPushButton("같은 원본 탭에 적용");self.refresh_source=QPushButton("새로고침 (F5)");self.sheet=QComboBox();self.sheet.setObjectName("excelSheet");self.sheet.setMinimumWidth(135)
+        source=QHBoxLayout();source.setSpacing(6);self.source_label=ElidedLabel("Excel 원본: 연결 안 됨");self.source_label.setObjectName("excelSourceLabel");source.addWidget(self.source_label,1);self.choose_source=QPushButton("Excel 연결");self.open_source=QPushButton("원본 열기");self.apply_source=QPushButton("연결 공유");self.refresh_source=QPushButton("새로고침 (F5)");self.sheet=QComboBox();self.sheet.setObjectName("excelSheet");self.sheet.setMinimumWidth(135)
         self.choose_source.setObjectName("excelPrimaryButton");self.open_source.setObjectName("excelButton");self.apply_source.setObjectName("excelButton");self.refresh_source.setObjectName("excelButton")
         for button,kind in ((self.choose_source,"excel"),(self.open_source,"open"),(self.apply_source,"apply"),(self.refresh_source,"refresh")):button.setIcon(excel_action_icon(kind));button.setIconSize(QSize(16,16))
         self.excel_more_button=QToolButton();self.excel_more_button.setObjectName("excelMoreButton");self.excel_more_button.setText("Excel 더보기");self.excel_more_button.setToolButtonStyle(Qt.ToolButtonTextOnly);self.excel_more_button.setPopupMode(QToolButton.InstantPopup)
@@ -751,12 +782,14 @@ class InputPage(QWidget):
             action=self.excel_more_menu.addAction(button.icon(),button.text());action.triggered.connect(lambda checked=False,target=button:target.click())
         self.excel_more_button.setMinimumSize(self.excel_more_button.sizeHint())
         for widget in (self.choose_source,self.open_source,self.apply_source,self.sheet,self.refresh_source,self.excel_more_button):source.addWidget(widget)
-        root.addLayout(source);self.tab_memo=QLineEdit();self.tab_memo.setObjectName("tabMemo");self.tab_memo.setPlaceholderText("이 분석 탭에 대한 한 줄 메모를 입력하세요.");self.tab_memo.setClearButtonEnabled(True);root.addWidget(self.tab_memo)
+        root.addLayout(source);self.tab_memo=QLineEdit();self.tab_memo.setObjectName("tabMemo");self.tab_memo.setPlaceholderText("메모");self.tab_memo.setClearButtonEnabled(True);root.addWidget(self.tab_memo)
         formula_row=QHBoxLayout();fx=QLabel("fx");fx.setObjectName("formulaPrefix");fx.setAlignment(Qt.AlignCenter);fx.setFixedWidth(32);self.formula=QLineEdit();self.formula.setObjectName("formulaBar");self.formula.setClearButtonEnabled(True);self.formula.setPlaceholderText("교통량·PHF 셀 주소(H12, H12:H15, H12,H15)를 입력하거나 = 키로 Excel에서 선택하세요.");formula_row.addWidget(fx);formula_row.addWidget(self.formula,1);root.addLayout(formula_row);self._formula_target=None
         self.change_notice=QLabel();self.change_notice.setObjectName("changeNotice");self.change_notice.hide();root.addWidget(self.change_notice)
         self.compare_bar=QLabel();self.compare_bar.setObjectName("compareBar");self.compare_bar.hide();root.addWidget(self.compare_bar)
         self.road_tabs=QTabWidget();self.road_tabs.setObjectName("connectedTabs");self.road_tabs.tabBar().setObjectName("contentTabBar");self.external=self._make_table();self.internal=self._make_table();external_page=make_card("외부도로",self.external);external_page.setObjectName("tabContentCard");internal_page=make_card("내부도로",self.internal);internal_page.setObjectName("tabContentCard");self.road_tabs.addTab(external_page,"외부도로");self.road_tabs.addTab(internal_page,"내부도로");root.addWidget(self.road_tabs,1)
-        buttons=QHBoxLayout();self.add=QPushButton("양방향 구간 추가 (Ctrl++)");self.copy=QPushButton("선택 구간 복사 (Ctrl+C)");self.paste=QPushButton("구간 붙여넣기 (Ctrl+V)");self.delete=QPushButton("선택 구간 삭제 (Ctrl+Del)");self.reset=QPushButton("선택 행 초기화");self.diagram_button=QPushButton("구간 연결 관계도 (F6)");self.optional=QPushButton("보조 입력 펼치기 (F7)");self.import_intersection_los=QPushButton("교차로 LOS 불러오기");self.import_intersection_los.setObjectName("excelButton");self.import_intersection_los.setIcon(excel_action_icon("excel"));self.import_intersection_los.setIconSize(QSize(16,16))
+        buttons=QHBoxLayout();self.add=QPushButton("구간 추가 (Ctrl++)");self.copy=QPushButton("복사 (Ctrl+C)");self.paste=QPushButton("붙여넣기 (Ctrl+V)");self.delete=QPushButton("구간 삭제 (Ctrl+Del)");self.reset=QPushButton("입력 초기화");self.diagram_button=QPushButton("구간 연결 관계도 (F6)");self.optional=QPushButton("보조 입력 (F7)");self.import_intersection_los=QPushButton("교차로 LOS 불러오기");self.import_intersection_los.setObjectName("excelButton");self.import_intersection_los.setIcon(excel_action_icon("excel"));self.import_intersection_los.setIconSize(QSize(16,16))
+        for button,icon_name in ((self.add,"add"),(self.copy,"copy"),(self.paste,"paste"),(self.delete,"trash"),(self.diagram_button,"network")):
+            button.setIcon(symbol(icon_name));button.setIconSize(QSize(16,16))
         self._action_buttons=(self.add,self.copy,self.paste,self.delete,self.reset,self.diagram_button,self.optional,self.import_intersection_los)
         for b in self._action_buttons:b.setMinimumSize(b.sizeHint());buttons.addWidget(b)
         self.more_button=QToolButton();self.more_button.setObjectName("inputMoreButton");self.more_button.setText("더보기");self.more_button.setToolButtonStyle(Qt.ToolButtonTextOnly);self.more_button.setPopupMode(QToolButton.InstantPopup);self.more_menu=QMenu(self.more_button);self.more_button.setMenu(self.more_menu)
@@ -764,12 +797,12 @@ class InputPage(QWidget):
         for button in self._action_buttons[1:]:
             action=self.more_menu.addAction(button.icon(),button.text());action.triggered.connect(lambda checked=False,target=button:target.click());self._overflow_actions[button]=action
         self.more_button.setMinimumSize(self.more_button.sizeHint())
-        buttons.addWidget(self.more_button);buttons.addStretch();self.next_button=QPushButton("분석 결과 보기");self.next_button.setObjectName("primaryButton");self.next_button.setMinimumSize(self.next_button.sizeHint());buttons.addWidget(self.next_button);root.addLayout(buttons)
+        buttons.addWidget(self.more_button);buttons.addStretch();self.next_button=QPushButton("분석 결과");self.next_button.setObjectName("primaryButton");self.next_button.setMinimumSize(self.next_button.sizeHint());buttons.addWidget(self.next_button);root.addLayout(buttons)
         shortcuts=QLabel("Enter/Tab 다음 셀  ·  방향키 이동  ·  = Excel 셀 연결  ·  Ctrl+H 연결 경로 일괄 변경  ·  Ctrl++/C/V/Del 구간 작업  ·  F5 새로고침  ·  F6 연결 관계도  ·  F7 보조열  ·  F8 비교  ·  F1 단축키")
         shortcuts.setObjectName("shortcutBar");root.addWidget(shortcuts)
         self.analysis_tabs.currentChanged.connect(self._tab_changed);self.analysis_tabs.activeLabelClicked.connect(self._edit_year);self.analysis_tabs.closeRequested.connect(lambda index:self.delete_tab(tuple(self.analysis_tabs.tabData(index))));self.choose_source.clicked.connect(self.choose_excel);self.open_source.clicked.connect(self.open_excel);self.apply_source.clicked.connect(self.apply_source_to_matching_tabs);self.refresh_source.clicked.connect(self.request_link_refresh);self.sheet.currentTextChanged.connect(self.sheet_changed);self.sheet.activated.connect(self.sheet_confirmed);self.formula.returnPressed.connect(self.apply_formula_bar);self.tab_memo.editingFinished.connect(self.save_tab_memo)
         self.add.clicked.connect(self.add_pair);self.copy.clicked.connect(self.copy_selected);self.paste.clicked.connect(self.paste_selected);self.delete.clicked.connect(self.delete_selected);self.reset.clicked.connect(self.reset_selected);self.diagram_button.clicked.connect(self.show_network_diagram);self.optional.clicked.connect(self.toggle_optional);self.import_intersection_los.clicked.connect(self.load_intersection_los)
-        self._diagram_shortcut=QShortcut(QKeySequence("F6"),self);self._diagram_shortcut.setContext(Qt.WidgetWithChildrenShortcut);self._diagram_shortcut.activated.connect(self.show_network_diagram);self.changed.connect(self.refresh_network_diagram);self.refresh_tabs();QTimer.singleShot(0,self._update_responsive_controls)
+        self._diagram_shortcut=QShortcut(QKeySequence("F6"),self);self._diagram_shortcut.setContext(Qt.WidgetWithChildrenShortcut);self._diagram_shortcut.activated.connect(self.show_network_diagram);self.changed.connect(self.refresh_network_diagram);self.refresh_tabs();QTimer.singleShot(0,self,self._update_responsive_controls)
 
     def resizeEvent(self,event):
         super().resizeEvent(event);self._update_responsive_controls()
@@ -878,6 +911,7 @@ class InputPage(QWidget):
         if box.exec()!=QMessageBox.Yes:return
         self.save_current();self.project.segments=[s for s in self.project.segments if (s.scenario,s.year)!=key];self.project.analysis_tabs=[i for i in self.project.analysis_tabs if (i.get("scenario"),int(i.get("year",0)))!=key];self.changed.emit();self.refresh_tabs()
     def load_key(self,key):
+        if self._link_window and key!=self.current_key:self.cancel_link("분석 탭이 바뀌어 Excel 연결을 취소했습니다.")
         self.current_key=key;show_internal=key[0] in ("사업 시행시","개선대책 이행시");self.road_tabs.setTabVisible(1,show_internal)
         if not show_internal:self.road_tabs.setCurrentIndex(0)
         self.load_table(self.external,[s for s in self.project.rows(*key) if s.road_category!=INTERNAL]);self.load_table(self.internal,[s for s in self.project.rows(*key) if s.road_category==INTERNAL]);self.update_source_bar();self.tab_memo.blockSignals(True);self.tab_memo.setText(str(self.project.tab_info(*key).get("memo","") or ""));self.tab_memo.blockSignals(False);self.refresh_network_diagram()
@@ -942,14 +976,35 @@ class InputPage(QWidget):
             for row in range(t.rowCount()):rows.append(self.parse_row(t,row,cat,old))
         self.project.replace_rows(*self.current_key,rows)
     def commit_row(self,t,row,col,back=False):
-        if row<0:return
-        uid=t.item(row,0).data(Qt.UserRole) if t.item(row,0) else "";before=next((x.to_dict() for x in self.project.segments if x.uid==uid),None)
+        if row<0 or not self.current_key or not t.item(row,0):return
+        uid=t.item(row,0).data(Qt.UserRole)
+        positions={s.uid:i for i,s in enumerate(self.project.segments) if (s.scenario,s.year)==self.current_key}
+        before=self.project.segments[positions[uid]] if uid in positions else None
         self.normalize_numeric(t,row)
-        self.save_current();s=next((x for x in self.project.segments if x.uid==uid),None)
-        self.propagate_dictionary(s,col);self.sync_arrival_values(s,col);self.refresh_live(t,row)
+        category=INTERNAL if t is self.internal else EXTERNAL
+        s=self.parse_row(t,row,category,{uid:before} if before else {})
+        if before==s:return
+        if uid in positions:self.project.segments[positions[uid]]=s
+        else:self.project.segments.append(s)
+        if col in (2,3,5,6):
+            identity=t.item(row,0).data(Qt.UserRole+1)
+            field={2:"start_number",3:"start_name",5:"end_number",6:"end_name"}[col]
+            for peer_row in range(t.rowCount()):
+                anchor=t.item(peer_row,0)
+                if peer_row==row or not identity or anchor.data(Qt.UserRole+1)!=identity:continue
+                peer_uid=anchor.data(Qt.UserRole)
+                if peer_uid not in positions:continue
+                peer=self.project.segments[positions[peer_uid]]
+                if getattr(peer,field)!=t.item(peer_row,col).text().strip():
+                    self.project.segments[positions[peer_uid]]=self.parse_row(t,peer_row,category,{peer_uid:peer})
+        self.propagate_dictionary(s,col)
+        affected=self.sync_arrival_values(s,col)
+        self.refresh_live(t,row,s)
+        for table,r,other in affected:
+            if other.uid!=uid:self.refresh_live(table,r,other)
         fields={1:("road_name","가로명"),2:("start_number","교차로 번호"),3:("start_name","교차로명"),4:("direction","방향"),5:("end_number","교차로 번호"),6:("end_name","교차로명"),7:("length_km","구간길이"),8:("lanes","차로수"),10:("cycle_s","주기"),11:("green_s","녹색시간"),12:("main_volume","교통량"),13:("phf","PHF"),17:("report_length_km","보고서 구간길이"),18:("report_volume","보고서 교통량"),19:("intersection_los","교차로 서비스수준"),20:("approach_los","접근로 서비스수준"),21:("speed_limit_kmh","제한속도(참고)")}
         if before and s and col in fields:
-            name,label=fields[col];old=before.get(name);new=getattr(s,name)
+            name,label=fields[col];old=getattr(before,name);new=getattr(s,name)
             if old!=new:self.add_change_log("change",s,label,old,new)
         self.changed.emit()
         self.schedule_link_refresh()
@@ -994,11 +1049,6 @@ class InputPage(QWidget):
             self.resolve_intersection(t,item);self.sync_pair(t,item)
         if item.column() in (12,13):
             t.blockSignals(True);item.setData(Qt.UserRole+5,None);item.setData(Qt.UserRole+6,"manual");item.setIcon(excel_link_icon("manual"));item.setBackground(QColor("#FFFFFF"));t.blockSignals(False)
-            uid=t.item(item.row(),0).data(Qt.UserRole);previous=next((s for s in self.project.segments if s.uid==uid),None)
-            if previous:
-                prefix="volume" if item.column()==12 else "phf"
-                if getattr(previous,f"{prefix}_source_cell"):
-                    for suffix,value in (("source_cell",""),("source_path",""),("source_sheet",""),("link_status",""),("link_error","")):setattr(previous,f"{prefix}_{suffix}",value)
         self.commit_row(t,item.row(),item.column())
     def resolve_intersection(self,t,item):
         col=item.column();number_col,name_col=(2,3) if col in (2,3) else (5,6);number=t.item(item.row(),number_col).text().strip();name=t.item(item.row(),name_col).text().strip()
@@ -1030,6 +1080,20 @@ class InputPage(QWidget):
                     same=(number and getattr(other,f"{prefix}_number")==number) or (name and getattr(other,f"{prefix}_name")==name)
                     if same:setattr(other,f"{prefix}_number",number);setattr(other,f"{prefix}_name",name)
             self.inherit_arrival_defaults(s)
+        if col in (1,2,3,5,6):
+            fields={1:"road_name",2:"start_number",3:"start_name",5:"end_number",6:"end_name"}
+            columns=(1,) if col==1 else (2,3,5,6)
+            by_uid={other.uid:other for other in self.project.rows(*self.current_key)}
+            for table in (self.external,self.internal):
+                blocked=table.blockSignals(True)
+                try:
+                    for r in range(table.rowCount()):
+                        other=by_uid.get(table.item(r,0).data(Qt.UserRole))
+                        if other is None:continue
+                        for c in columns:
+                            item=table.item(r,c);value=getattr(other,fields[c])
+                            if item.text()!=value:item.setText(value)
+                finally:table.blockSignals(blocked)
     def inherit_arrival_defaults(self,s):
         arrival=self.arrival(s);candidates=[x for x in self.project.rows(*self.current_key) if x.uid!=s.uid and self.arrival(x)==arrival]
         if not any(arrival) or not candidates:return
@@ -1044,7 +1108,8 @@ class InputPage(QWidget):
             for row in range(table.rowCount()):
                 if table.item(row,0).data(Qt.UserRole)==s.uid:
                     if "cycle_s" not in s.blank_fields:table.item(row,10).setText(f"{round(s.cycle_s):,}")
-                    if "phf" not in s.blank_fields:table.item(row,13).setText(f"{s.phf:.2f}")
+                    if "phf" not in s.blank_fields:
+                        item=table.item(row,13);item.setText(f"{s.phf:.2f}");item.setData(Qt.UserRole+5,"="+s.phf_source_cell if s.phf_source_cell else None)
             table.blockSignals(False)
     def arrival(self,s):return (s.end_number,s.end_name) if s.direction=="→" else (s.start_number,s.start_name)
     def load_intersection_los(self):
@@ -1077,9 +1142,10 @@ class InputPage(QWidget):
             self.project.tab_info(*key).update(intersection_los_source_path=resolved,intersection_los_source_sheet=group.sheet,intersection_los_source_header=group.header)
         settings.setValue("recentIntersectionLosPath",resolved);self.add_change_log("change",field="교차로 LOS 참고값",old="",new=f"{len(assignments)}개");self.load_key(self.current_key);self.changed.emit();QMessageBox.information(self,"교차로 LOS 불러오기",f"교차로 서비스수준 참고값 {len(assignments)}개를 입력했습니다."+(f"\n일치하지 않은 구간은 {len(missing)}개입니다." if missing else ""))
     def sync_arrival_values(self,s,col):
-        if not s:return
+        changed=[]
+        if not s:return changed
         arrival=self.arrival(s)
-        if not any(arrival):return
+        if not any(arrival):return changed
         if col in (10,13,19):
             affected=[]
             for other in self.project.rows(*self.current_key):
@@ -1096,13 +1162,16 @@ class InputPage(QWidget):
                 for row in range(table.rowCount()):
                     other=by_uid.get(table.item(row,0).data(Qt.UserRole) if table.item(row,0) else None)
                     if not other:continue
+                    changed.append((table,row,other))
                     if col==10:table.item(row,10).setText(f"{round(other.cycle_s):,}")
                     elif col==13:
                         item=table.item(row,13);item.setText(f"{other.phf:.2f}");item.setData(Qt.UserRole+5,"="+other.phf_source_cell if other.phf_source_cell else None);status="error" if other.phf_link_error else (other.phf_link_status or "manual");item.setData(Qt.UserRole+6,status);item.setIcon(excel_link_icon(status));background="#FFE5E5" if other.phf_link_error else ("#FFF0C2" if other.phf_link_status in ("unconfirmed","last_saved") else ("#E5F4EA" if other.phf_source_cell else "#FFFFFF"));item.setBackground(QColor(background))
                     else:table.item(row,19).setText(other.intersection_los)
                 table.blockSignals(False)
-    def refresh_live(self,t,row):
-        uid=t.item(row,0).data(Qt.UserRole);s=next((x for x in self.project.segments if x.uid==uid),None)
+        return changed
+    def refresh_live(self,t,row,s=None):
+        if s is None:
+            uid=t.item(row,0).data(Qt.UserRole);s=next((x for x in self.project.segments if x.uid==uid),None)
         if not s:return
         try:r=analyze_segment(s,self.project.settings) if self.project.is_complete(s) else None;speed=f"{r.speed_kmh:.1f}" if r else "";los=r.los if r else "";tip="" if r else "입력 미완료"
         except Exception as exc:speed="";los="";tip=str(exc)
@@ -1113,7 +1182,7 @@ class InputPage(QWidget):
         self.refresh_network_diagram(t.item(row,0).data(Qt.UserRole) if row>=0 and t.item(row,0) else "")
         if row<0 or col not in (12,13):self._formula_target=None;self.formula.clear();return
         self._formula_target=(t,row,col)
-        self.save_current();uid=t.item(row,0).data(Qt.UserRole);s=next((x for x in self.project.segments if x.uid==uid),None);info=self.project.tab_info(*self.current_key)
+        uid=t.item(row,0).data(Qt.UserRole);s=next((x for x in self.project.segments if x.uid==uid),None);info=self.project.tab_info(*self.current_key)
         prefix="volume" if col==12 else "phf";address=getattr(s,f"{prefix}_source_cell","") if s else ""
         self.formula.setText("="+address if address else (t.item(row,col).text() if t.item(row,col) else ""))
 
@@ -1201,11 +1270,11 @@ class InputPage(QWidget):
         self.save_current();uids={t.item(r,0).data(Qt.UserRole) for r in rows};self._clipboard=[s.to_dict() for s in self.project.rows(*self.current_key) if s.uid in uids]
         clipboard=QGuiApplication.clipboard();mime=QMimeData();mime.setText(clipboard.text());mime.setData(FastInputTable.SEGMENT_MIME,QByteArray(b"1"));clipboard.setMimeData(mime)
     def paste_selected(self):
-        if not self._clipboard:QMessageBox.information(self,"구간 붙여넣기","먼저 구간을 복사해 주세요.");return
+        if not self._clipboard:QMessageBox.information(self,"붙여넣기","먼저 구간을 복사해 주세요.");return
         t=self.active_table();ids={};scenario,year=self.current_key;t.blockSignals(True)
         for data in self._clipboard:
             s=SegmentInput.from_dict(data);s.uid=uuid4().hex;s.comparison_id=ids.setdefault(s.comparison_id,f"auto-{uuid4().hex[:8]}");s.scenario=scenario;s.year=year;s.road_category=INTERNAL if t is self.internal else EXTERNAL;s.manual_speed_kmh=None;s.speed_adjustment_history=[];self.append_segment(t,s)
-        self.merge_pairs(t);t.blockSignals(False);t._update_frozen_geometry();self.save_current();self.add_change_log("change",field="구간 붙여넣기",old="",new=f"{len(self._clipboard)}개 행");self.changed.emit()
+        self.merge_pairs(t);t.blockSignals(False);t._update_frozen_geometry();self.save_current();self.add_change_log("change",field="붙여넣기",old="",new=f"{len(self._clipboard)}개 행");self.changed.emit()
     def delete_selected(self):
         t=self.active_table();rows=self.selected_rows()
         if not rows:QMessageBox.information(self,"행 삭제","삭제할 행을 체크해 주세요.");return
@@ -1227,7 +1296,7 @@ class InputPage(QWidget):
         t=self.active_table();show=t.isColumnHidden(17)
         for table in (self.external,self.internal):
             for c in (17,18,19,20,21):table.setColumnHidden(c,not show)
-        self.optional.setText("보조 입력 접기 (F7)" if show else "보조 입력 펼치기 (F7)")
+        self.optional.setText("보조 입력 닫기 (F7)" if show else "보조 입력 (F7)")
         self._overflow_actions[self.optional].setText(self.optional.text())
     def toggle_compare(self):
         if self.compare_bar.isVisible():self.compare_bar.hide();return
@@ -1244,7 +1313,7 @@ class InputPage(QWidget):
         info=self.project.tab_info(*self.current_key);settings=QSettings("NYH","ArterialAnalysis")
         recent=info.get("source_path","") or str(settings.value("recentExcelPath","") or "")
         start=recent if recent and Path(recent).exists() else (str(Path(recent).parent) if recent else "")
-        path,_=QFileDialog.getOpenFileName(self,"현재 분석 탭에 연결할 Excel 원본 선택",start,"Excel 통합문서 (*.xlsx *.xls *.xlsm *.xlsb)")
+        path,_=QFileDialog.getOpenFileName(self,"현재 분석 탭에 연결할 Excel 연결",start,"Excel 통합문서 (*.xlsx *.xls *.xlsm *.xlsb)")
         if not path:return False
         try:sheets=list_sheets(path)
         except Exception as exc:QMessageBox.critical(self,"Excel 연결 실패",str(exc));return False
@@ -1297,28 +1366,30 @@ class InputPage(QWidget):
         try:open_and_activate(path,info.get("source_sheet",""))
         except Exception as exc:QMessageBox.critical(self,"원본 열기 실패",str(exc))
     def start_link(self,t,row):
-        if self._link_timer is not None and self._link_timer.isActive():
+        if self._link_window is not None or self._selection_job is not None or self._excel_close_pool.activeThreadCount():
             self.formula.setText("이미 Excel 셀 연결을 기다리는 중입니다. Excel에서 셀을 선택하고 Enter를 누르세요.");return
         info=self.project.tab_info(*self.current_key)
         if not info.get("source_path"):
             self.formula.clear();self.formula.setPlaceholderText("현재 분석 탭에 연결할 Excel 원본을 선택하세요. 취소하면 아무것도 연결되지 않습니다.")
-            if not self.choose_excel():self.formula.setPlaceholderText("Excel 원본 선택을 취소했습니다. Excel 아이콘을 누르면 다시 선택할 수 있습니다.");return
+            if not self.choose_excel():self.formula.setPlaceholderText("Excel 연결을 취소했습니다. Excel 아이콘을 누르면 다시 선택할 수 있습니다.");return
             info=self.project.tab_info(*self.current_key)
         col=t.currentColumn()
         if col not in (12,13):col=12
         self.formula.clear();self.formula.setPlaceholderText("연결 대기: Excel에서 셀을 선택하고 Enter를 누르세요. Esc는 취소입니다.")
-        self.save_current();uid=t.item(row,0).data(Qt.UserRole);segment=next((s for s in self.project.segments if s.uid==uid),None);prefix="volume" if col==12 else "phf";address=getattr(segment,f"{prefix}_source_cell","") if segment else ""
+        uid=t.item(row,0).data(Qt.UserRole);segment=next((s for s in self.project.segments if s.uid==uid),None);prefix="volume" if col==12 else "phf";address=getattr(segment,f"{prefix}_source_cell","") if segment else ""
         self._link_was_maximized=self.window().isMaximized()
         try:self._link_window=open_link_window(info["source_path"],info.get("source_sheet",""),address,self.excel_screen_geometry())
         except Exception as exc:QMessageBox.critical(self,"Excel 연결 실패",str(exc));return
-        self._link_table=t;self._link_row=row;self._link_col=col;self._enter_was_down=False;self._escape_was_down=False;self._link_timer=QTimer(self);self._link_timer.timeout.connect(self.poll_link);self._link_timer.start(60)
+        self._link_table=t;self._link_row=row;self._link_col=col;self._link_uid=uid;self._enter_was_down=False;self._escape_was_down=False;self._link_timer=QTimer(self);self._link_timer.timeout.connect(self.poll_link);self._link_timer.start(60)
     def excel_screen_geometry(self):
         screens=QGuiApplication.screens()
         if len(screens)<2:return None
         current=self.window().screen();target=next((screen for screen in screens if screen is not current),screens[0]);g=target.availableGeometry();return g.x(),g.y(),g.width(),g.height()
     def cancel_link(self,message="Excel 셀 연결을 취소했습니다."):
         if self._link_timer is not None:self._link_timer.stop();self._link_timer.deleteLater();self._link_timer=None
-        close_link_window(self._link_window);self._link_window=None;self._link_table=None;self._link_row=-1;self._link_col=-1;self._enter_was_down=False;self._escape_was_down=False;self.formula.clear();self.formula.setPlaceholderText(message);self.restore_window_after_link()
+        window=self._link_window;self._link_window=None;self._link_table=None;self._link_row=-1;self._link_col=-1;self._link_uid=None;self._enter_was_down=False;self._escape_was_down=False
+        if window:self._excel_close_pool.start(ExcelCloseTask(window))
+        self.formula.clear();self.formula.setPlaceholderText(message);self.restore_window_after_link()
     def restore_window_after_link(self):
         window=self.window();window.showMaximized() if self._link_was_maximized else window.showNormal();window.raise_();window.activateWindow();self._link_was_maximized=False
     def poll_link(self):
@@ -1328,29 +1399,54 @@ class InputPage(QWidget):
         if bool(ctypes.windll.user32.GetAsyncKeyState(0x1B)&0x8000):self._escape_was_down=True;return
         if self._escape_was_down:self.cancel_link();return
         down=bool(ctypes.windll.user32.GetAsyncKeyState(0x0D)&0x8000)
-        if down:self._enter_was_down=True;return
+        if down:
+            if int(ctypes.windll.user32.GetForegroundWindow())==hwnd:self._enter_was_down=True
+            return
         if not self._enter_was_down:return
         self._enter_was_down=False
-        try:path,sheet,address,saved=active_selection()
-        except Exception as exc:self.formula.setPlaceholderText(f"셀 선택 오류: {exc}");return
-        if not saved:
-            self.formula.setPlaceholderText("Excel 원본을 저장한 뒤 셀을 선택하고 Enter를 다시 누르세요. Esc는 취소입니다.");return
-        info=self.project.tab_info(*self.current_key);info.update(source_path=path,source_sheet=sheet,source_mtime=Path(path).stat().st_mtime)
+        if self._selection_job is not None or self._link_table is None:return
         kind="volume" if self._link_col==12 else "phf"
-        try:value,address=read_saved_cell(path,sheet,address,kind)
-        except Exception as exc:self.formula.setPlaceholderText(f"셀값 오류: {exc} · 다시 선택하거나 Esc로 취소하세요.");return
-        self.save_current();uid=self._link_table.item(self._link_row,0).data(Qt.UserRole);s=next(x for x in self.project.segments if x.uid==uid);prefix=kind;field="main_volume" if kind=="volume" else "phf";old=getattr(s,field);setattr(s,field,value);setattr(s,f"{prefix}_source_cell",address);setattr(s,f"{prefix}_source_path","");setattr(s,f"{prefix}_source_sheet","");setattr(s,f"{prefix}_last_value",value);setattr(s,f"{prefix}_link_status","ok");setattr(s,f"{prefix}_link_error","");s.blank_fields=[x for x in s.blank_fields if x!=field]
+        uid=self._link_uid or self._link_table.item(self._link_row,0).data(Qt.UserRole)
+        segment=next((s for s in self.project.rows(*self.current_key) if s.uid==uid),None)
+        if segment is None:self.cancel_link("연결 대상 구간이 변경되었습니다.");return
+        task=ExcelSelectionTask((self._link_window,self.project,self.current_key,uid,kind,segment.to_dict()))
+        self._selection_job=task;task.signals.finished.connect(self._finish_excel_selection,Qt.QueuedConnection)
+        self.formula.setPlaceholderText("선택한 Excel 셀의 저장값을 읽는 중입니다…")
+        QThreadPool.globalInstance().start(task)
+
+    @Slot(object)
+    def _finish_excel_selection(self,payload):
+        (window,project,key,uid,kind,previous),result,error=payload
+        if self._link_window is window and self.project is project and self.current_key==key and self._link_table.state()==QAbstractItemView.EditingState:
+            QTimer.singleShot(100,self,lambda:self._finish_excel_selection(payload));return
+        self._selection_job=None
+        if self._link_window is not window:return
+        if self.project is not project or self.current_key!=key:
+            self.cancel_link("분석 탭이 바뀌어 Excel 연결을 취소했습니다.");return
+        table=self._link_table;col=self._link_col
+        row=next((r for r in range(table.rowCount()) if table.item(r,0).data(Qt.UserRole)==uid),-1)
+        s=next((x for x in self.project.rows(*key) if x.uid==uid),None)
+        if row<0 or s is None or s.to_dict()!=previous:
+            self.cancel_link("연결 대상 구간이 변경되어 다시 선택해야 합니다.");return
+        if error:
+            self.formula.setPlaceholderText(f"{error} · 다시 선택하거나 Esc로 취소하세요.");return
+        path,sheet,address,value=result
+        info=self.project.tab_info(*key);prefix=kind;field="main_volume" if kind=="volume" else "phf";old=getattr(s,field)
+        setattr(s,field,value);setattr(s,f"{prefix}_source_cell",address)
+        setattr(s,f"{prefix}_source_path","" if Path(path)==Path(info.get("source_path","")) else path)
+        setattr(s,f"{prefix}_source_sheet","" if sheet==info.get("source_sheet","") else sheet)
+        setattr(s,f"{prefix}_last_value",value);setattr(s,f"{prefix}_link_status","ok");setattr(s,f"{prefix}_link_error","");s.blank_fields=[x for x in s.blank_fields if x!=field]
         if kind=="phf":self.sync_arrival_values(s,13)
-        self.add_change_log("change",s,"교통량" if kind=="volume" else "PHF",old,value);self._link_timer.stop();self._link_timer.deleteLater();self._link_timer=None;close_link_window(self._link_window);self._link_window=None
-        table=self._link_table;row=self._link_row;col=self._link_col;self._link_table=None;self._link_row=-1;self._link_col=-1
+        self.add_change_log("change",s,"교통량" if kind=="volume" else "PHF",old,value)
+        self.cancel_link("Excel 셀 연결을 완료했습니다.")
         affected={s.uid}
         if kind=="phf":affected.update(other.uid for other in self.project.rows(*self.current_key) if self.arrival(other)==self.arrival(s))
-        self._update_link_cells(affected);table.setCurrentCell(min(row+1,table.rowCount()-1),col);self.restore_window_after_link();self.changed.emit()
+        self._update_link_cells(affected);table.setCurrentCell(min(row+1,table.rowCount()-1),col);self.changed.emit()
     def _link_source(self,s,info,prefix):
         return (getattr(s,f"{prefix}_source_path") or info.get("source_path",""),getattr(s,f"{prefix}_source_sheet") or info.get("source_sheet",""),prefix)
 
     def _link_groups(self):
-        self.save_current();info=self.project.tab_info(*self.current_key)
+        info=self.project.tab_info(*self.current_key)
         groups={}
         for s in self.project.rows(*self.current_key):
             for prefix in ("volume","phf"):
@@ -1379,10 +1475,10 @@ class InputPage(QWidget):
         if self._refresh_job is None or self._refresh_job.context[0]!=generation:return
         # Do not replace an editor's in-progress text when a read completes.
         if project is self.project and key==self.current_key and any(t.state()==QAbstractItemView.EditingState for t in (self.external,self.internal)):
-            QTimer.singleShot(100,lambda:self._finish_link_read(payload));return
+            QTimer.singleShot(100,self,lambda:self._finish_link_read(payload));return
         self._refresh_job=None
         if generation==self._refresh_generation and project is self.project and key==self.current_key:
-            self.save_current();self._apply_link_results(groups,results)
+            self._apply_link_results(groups,results)
         pending=self._refresh_pending;self._refresh_pending=False
         if pending:self.request_link_refresh()
         self.linksRefreshed.emit()
@@ -1403,11 +1499,15 @@ class InputPage(QWidget):
                 if s is None or self._link_source(s,info,prefix)!=source or getattr(s,f"{prefix}_source_cell")!=requested or getattr(s,field)!=previous:continue
                 cell=normalize_expression(requested)
                 value,address,error=(None,cell,values) if isinstance(values,str) else values.get(cell,(None,cell,"셀을 찾을 수 없습니다."))
-                affected.add(uid)
                 if error:
                     prior=getattr(s,f"{prefix}_link_error");setattr(s,f"{prefix}_link_error",f"연결 오류: {error}");errors+=1
-                    if prior!=getattr(s,f"{prefix}_link_error"):self.add_change_log("error",s,message=getattr(s,f"{prefix}_link_error"))
+                    if prior!=getattr(s,f"{prefix}_link_error"):
+                        affected.add(uid);self.add_change_log("error",s,message=getattr(s,f"{prefix}_link_error"))
                     continue
+                if (prefix=="volume" and getattr(s,field)==value and field not in s.blank_fields and getattr(s,f"{prefix}_source_cell")==address
+                    and getattr(s,f"{prefix}_last_value")==value and getattr(s,f"{prefix}_link_status")=="ok" and not getattr(s,f"{prefix}_link_error")):
+                    continue
+                affected.add(uid)
                 field="main_volume" if prefix=="volume" else "phf";old=getattr(s,field);setattr(s,field,value);setattr(s,f"{prefix}_last_value",value);setattr(s,f"{prefix}_source_cell",address);setattr(s,f"{prefix}_link_error","");setattr(s,f"{prefix}_link_status","ok");s.blank_fields=[x for x in s.blank_fields if x!=field];updated+=1
                 if old!=value:self.add_change_log("change",s,"교통량" if prefix=="volume" else "PHF",old,value)
                 if prefix=="phf":
@@ -1433,7 +1533,7 @@ class InputPage(QWidget):
                         item.setIcon(excel_link_icon(status));item.setData(Qt.UserRole+6,status);item.setData(Qt.UserRole+5,"="+address if address else None)
                         item.setBackground(QColor("#FFE5E5" if error else ("#FFF0C2" if status in ("unconfirmed","last_saved") else ("#E5F4EA" if address else "#FFFFFF"))))
                         item.setToolTip(error or ("Excel 연결: "+address if address else "Excel 아이콘을 누르거나 = 키로 원본 셀을 연결할 수 있습니다."))
-                    self.refresh_live(table,row)
+                    self.refresh_live(table,row,s)
             finally:table.blockSignals(blocked)
 
 
@@ -1477,8 +1577,9 @@ class UserGuideDialog(QDialog):
     def __init__(self,parent=None):
         super().__init__(parent);self.setWindowTitle("사용설명서");self.resize(760,590);self.setMinimumSize(650,480);root=QVBoxLayout(self);tabs=QTabWidget();tabs.setObjectName("connectedTabs");tabs.tabBar().setObjectName("contentTabBar");root.addWidget(tabs,1)
         pages={
-            "빠른 시작":"""<h2>기본 분석 순서</h2><ol><li>현황 탭에서 가로명과 양쪽 교차로를 입력합니다.</li><li>구간길이, 차로수, 주기, 녹색시간, 교통량과 PHF를 입력합니다.</li><li>필요하면 분석 탭을 추가하고 현황 자료를 기준으로 수정합니다.</li><li><b>분석 결과 보기</b>에서 평균통행속도와 서비스수준을 확인합니다.</li><li>세부 계산결과와 입력 경고를 검토한 뒤 프로젝트를 저장합니다.</li></ol><p>Enter·Tab으로 다음 입력 셀, Shift+Enter·Shift+Tab으로 이전 셀로 이동합니다.</p>""",
-            "Excel 연결":"""<h2>Excel 셀 연결</h2><p><b>Excel 원본 선택</b>에서 현재 분석 탭의 파일과 시트를 연결합니다. 교통량 또는 PHF 셀의 Excel 아이콘이나 <b>=</b> 키를 누르면 원본이 열립니다.</p><ol><li>Excel에서 셀 또는 범위를 선택합니다.</li><li>Enter를 누르면 주소와 저장된 숫자값을 가져오고 연결용 Excel 창이 닫힙니다.</li><li>교통량은 여러 셀·범위의 합계를 사용할 수 있고 PHF는 한 셀만 연결할 수 있습니다.</li></ol><p>주소창에 H12, H12:H15, H12,H15처럼 직접 입력할 수도 있습니다. 원본 값을 바꾼 뒤 저장하고 F5를 누르면 화면의 연결값을 갱신합니다.</p><p>초록 아이콘은 정상, 회색은 수기 입력, 황색은 확인 필요, 빨강은 연결 오류를 뜻합니다.</p>""",
+            "2026 분석":"""<h2>2026 도로용량편람 (베타)</h2><p>설정 → 분석 기준에서 선택합니다. 2026 분석의 지침·계산식 탭에서 적용 조건과 입력 방법을 확인하세요.</p><p>2013 자료와 2026 자료는 별도로 저장됩니다. 접근지체는 별도 분석 결과를 입력하며, 2013 지체를 자동 적용하지 않습니다.</p>""",
+            "빠른 시작":"""<h2>기본 분석 순서</h2><ol><li>현황 탭에서 가로명과 양쪽 교차로를 입력합니다.</li><li>구간길이, 차로수, 주기, 녹색시간, 교통량과 PHF를 입력합니다.</li><li>필요하면 분석 탭을 추가하고 현황 자료를 기준으로 수정합니다.</li><li><b>분석 결과</b>에서 평균통행속도와 서비스수준을 확인합니다.</li><li>세부 계산결과와 입력 경고를 검토한 뒤 프로젝트를 저장합니다.</li></ol><p>Enter·Tab으로 다음 입력 셀, Shift+Enter·Shift+Tab으로 이전 셀로 이동합니다.</p>""",
+            "Excel 연결":"""<h2>Excel 셀 연결</h2><p><b>Excel 연결</b>에서 현재 분석 탭의 파일과 시트를 연결합니다. 교통량 또는 PHF 셀의 Excel 아이콘이나 <b>=</b> 키를 누르면 원본이 열립니다.</p><ol><li>Excel에서 셀 또는 범위를 선택합니다.</li><li>Enter를 누르면 주소와 저장된 숫자값을 가져오고 연결용 Excel 창이 닫힙니다.</li><li>교통량은 여러 셀·범위의 합계를 사용할 수 있고 PHF는 한 셀만 연결할 수 있습니다.</li></ol><p>주소창에 H12, H12:H15, H12,H15처럼 직접 입력할 수도 있습니다. 원본 값을 바꾼 뒤 저장하고 F5를 누르면 화면의 연결값을 갱신합니다.</p><p>초록 아이콘은 정상, 회색은 수기 입력, 황색은 확인 필요, 빨강은 연결 오류를 뜻합니다.</p>""",
             "입력과 검토":"""<h2>입력표</h2><ul><li>한 구간은 두 방향 행으로 구성되며, 공통 교차로 정보는 병합해 표시합니다.</li><li>교차로 번호와 이름은 프로젝트 안에서 서로 동기화됩니다.</li><li>도착교차로가 같으면 주기와 PHF 연결정보를 공유하지만 녹색시간은 방향별로 유지합니다.</li><li>PHF는 0.00~1.00, 편도 차로수는 최대 10이며 녹색시간은 주기를 넘을 수 없습니다.</li><li>F7 보조 입력에는 보고서용 길이·교통량, 참고 LOS와 표지판 제한속도를 입력합니다.</li><li>교차로 LOS 불러오기는 정리 Excel의 상황·연도와 도착교차로를 대조해 참고값을 일괄 입력합니다.</li></ul><p>구간 연결 관계도(F6)에서 노드와 가로 연결관계를 확인하고, 선을 누르면 입력표의 해당 구간이 선택됩니다.</p>""",
             "결과와 저장":"""<h2>결과 확인</h2><p>분석 결과에는 도로유형, 구간거리, 교통량, 평균통행속도와 LOS가 표시됩니다. 상세 계산에서는 편람 공식에 사용된 중간값을 확인할 수 있습니다.</p><ul><li>보고서 교통량이 비어 있으면 분석 교통량을 그대로 사용합니다.</li><li>Excel 연결 오류가 있으면 마지막 정상값을 유지하되 결과 화면에 경고합니다.</li><li>Ctrl+Z는 되돌리기, Ctrl+Y는 다시 실행입니다.</li><li>변경 기록은 프로젝트와 함께 저장되며 다른 이름으로 저장해도 유지됩니다.</li></ul>""",
             "문제 해결":"""<h2>자주 확인할 사항</h2><ul><li><b>Excel 값이 갱신되지 않음:</b> 원본을 저장한 뒤 F5를 누르세요.</li><li><b>연결 오류:</b> 원본 경로와 시트명, 셀 주소를 확인하거나 Ctrl+H로 선택한 연결의 경로를 일괄 변경하세요.</li><li><b>입력값이 분석되지 않음:</b> 필수 숫자칸과 양쪽 교차로가 모두 입력되었는지 확인하세요.</li><li><b>화면에서 열이 보이지 않음:</b> 아래 가로 스크롤바를 사용하거나 F7로 보조 입력을 접으세요.</li></ul><p>분석 결과는 입력자료와 적용 조건에 따라 달라지므로 최종 성과품 작성 전 세부 계산결과를 검토해야 합니다.</p>""",
@@ -1489,7 +1590,7 @@ class UserGuideDialog(QDialog):
 
 class ShortcutDialog(QDialog):
     def __init__(self,parent=None):
-        super().__init__(parent);self.setWindowTitle("키보드 단축키");self.setMinimumWidth(540);layout=QVBoxLayout(self);layout.addWidget(QLabel("Enter / Tab : 입력 확정 후 다음 셀\nShift+Enter / Shift+Tab : 이전 셀\n방향키 : 셀 이동    F2 : 셀 편집    Delete : 내용 지우기\nCtrl+C : 체크한 구간 복사    Ctrl+V : 구간 붙여넣기\nCtrl++ / Ctrl+= : 양방향 구간 추가    Ctrl+Delete : 체크한 구간 삭제\n(셀 편집 중 Ctrl+C/V는 일반 문자 복사·붙여넣기)\nCtrl+D / Ctrl+R : 아래/오른쪽 채우기\nCtrl+Z : 되돌리기    Ctrl+Y / Ctrl+Shift+Z : 다시 실행\nCtrl+H : 선택한 Excel 연결 셀의 파일·시트 경로 일괄 변경\nCtrl+PageUp / PageDown : 분석 탭 이동    Ctrl+T : 분석 탭 추가\n= : 선택한 교통량·PHF 셀을 Excel 셀에 연결\nF5 : Excel 저장값 일괄 새로고침    F6 : 구간 연결 관계도\nF7 : 보조 입력 열    F8 : 같은 연도 간이 비교"));b=QDialogButtonBox(QDialogButtonBox.Close);b.button(QDialogButtonBox.Close).setText("닫기");b.rejected.connect(self.reject);layout.addWidget(b)
+        super().__init__(parent);self.setWindowTitle("키보드 단축키");self.setMinimumWidth(540);layout=QVBoxLayout(self);layout.addWidget(QLabel("Enter / Tab : 입력 확정 후 다음 셀\nShift+Enter / Shift+Tab : 이전 셀\n방향키 : 셀 이동    F2 : 셀 편집    Delete : 내용 지우기\nCtrl+C : 체크한 구간 복사    Ctrl+V : 붙여넣기\nCtrl++ / Ctrl+= : 구간 추가    Ctrl+Delete : 체크한 구간 삭제\n(셀 편집 중 Ctrl+C/V는 일반 문자 복사·붙여넣기)\nCtrl+D / Ctrl+R : 아래/오른쪽 채우기\nCtrl+Z : 되돌리기    Ctrl+Y / Ctrl+Shift+Z : 다시 실행\nCtrl+H : 선택한 Excel 연결 셀의 파일·시트 경로 일괄 변경\nCtrl+PageUp / PageDown : 분석 탭 이동    Ctrl+T : 분석 탭 추가\n= : 선택한 교통량·PHF 셀을 Excel 셀에 연결\nF5 : Excel 저장값 일괄 새로고침    F6 : 구간 연결 관계도\nF7 : 보조 입력 열    F8 : 같은 연도 간이 비교"));b=QDialogButtonBox(QDialogButtonBox.Close);b.button(QDialogButtonBox.Close).setText("닫기");b.rejected.connect(self.reject);layout.addWidget(b)
 
 
 def project_argument(arguments):
@@ -1502,6 +1603,15 @@ def project_argument(arguments):
 
 def project_open_command(executable):
     return f'"{Path(executable).resolve()}" "%1"'
+
+
+def project_drop_path(mime):
+    """Only one existing local project is a file-open gesture."""
+    if not mime.hasUrls():return None
+    urls=mime.urls()
+    if len(urls)!=1 or not urls[0].isLocalFile():return None
+    path=Path(urls[0].toLocalFile())
+    return str(path.resolve()) if path.suffix.lower()==".ara1" and path.is_file() else None
 
 
 def register_project_file_association(executable=None):
@@ -1522,16 +1632,73 @@ def register_project_file_association(executable=None):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();load_font();self.project=blank_project();self.path=None;self.dirty=False;self._restoring=False;self._undo=[];self._redo=[];self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}");self.resize(1224,756);self.setMinimumSize(880,600);icon=resource_path("assets/arterial-analysis-icon.ico");self.setWindowIcon(QIcon(icon)) if Path(icon).exists() else None
-        self.tabs=QTabWidget();self.tabs.setObjectName("mainTabs");self.tabs.tabBar().setObjectName("mainTabBar");self.workflow=Workflow(self.project);self.tabs.addTab(self.workflow,"분석");self.tabs.addTab(GuidelinePage(),"지침·공식");self.setCentralWidget(self.tabs);self.workflow.changed.connect(self.mark_dirty);self.setup_history_panel()
+        self.setAcceptDrops(True);QApplication.instance().installEventFilter(self)
+        self.tabs=QTabWidget();self.tabs.setObjectName("mainTabs");self.tabs.tabBar().setObjectName("mainTabBar");self.workflow=Workflow(self.project);self.tabs.addTab(self.workflow,"분석 · 2013");self.tabs.addTab(GuidelinePage(),"지침·공식");self.setCentralWidget(self.tabs);self.workflow.changed.connect(self.mark_dirty);self.setup_history_panel()
         menu=self.menuBar().addMenu("프로젝트")
         for label,slot,shortcut in (("새 프로젝트",self.new,"Ctrl+N"),("열기",self.open,"Ctrl+O"),("저장",self.save,"Ctrl+S"),("다른 이름으로 저장",self.save_as,"Ctrl+Shift+S")):
             a=QAction(label,self);a.setShortcut(shortcut);a.triggered.connect(slot);menu.addAction(a)
-        view_menu=self.menuBar().addMenu("보기");self.theme_action=QAction("다크 모드",self);self.theme_action.setCheckable(True);self.theme_action.setChecked(str(QSettings("NYH","ArterialAnalysis").value("darkMode","false")).lower() in ("1","true","yes"));self.theme_action.triggered.connect(self.apply_theme);view_menu.addAction(self.theme_action)
+        settings_menu=self.menuBar().addMenu("설정")
+        self.theme_action=QAction("다크 모드",self);self.theme_action.setCheckable(True)
+        self.theme_group=QActionGroup(self);self.theme_group.setExclusive(True);self.theme_choices={}
+        settings=QSettings("NYH","ArterialAnalysis")
+        self.theme_mode=str(settings.value("themeMode","dark" if str(settings.value("darkMode","false")).lower() in ("true","1") else "system"))
+        for key,label in (("light","라이트 모드"),("dark","다크 모드"),("system","기기 설정 따르기")):
+            action=QAction(label,self);action.setCheckable(True);action.setChecked(key==self.theme_mode);self.theme_group.addAction(action);settings_menu.addAction(action);self.theme_choices[key]=action
+            action.triggered.connect(lambda checked=False,mode=key:self.set_theme_mode(mode))
+        QApplication.instance().styleHints().colorSchemeChanged.connect(self.follow_device_theme)
+        settings_menu.addSeparator();edition_action=QAction("분석 기준",self);edition_action.triggered.connect(self.choose_edition);settings_menu.addAction(edition_action)
+        self.beta_page=CorridorPage(self.project, NetworkDiagramDialog);self.beta_page.changed.connect(self.mark_dirty);self.beta_index=self.tabs.addTab(self.beta_page,"2026 분석 (베타)");self.tabs.setTabVisible(self.beta_index,False)
         help_menu=self.menuBar().addMenu("도움말");guide=QAction("사용설명서",self);guide.triggered.connect(lambda:UserGuideDialog(self).exec());help_menu.addAction(guide);short=QAction("키보드 단축키",self);short.setShortcut("F1");short.triggered.connect(lambda:ShortcutDialog(self).exec());help_menu.addAction(short)
         self.updater=UpdateController(APP_VERSION,self);update_action=QAction("업데이트 확인",self);update_action.triggered.connect(lambda:self.updater.check(True));help_menu.addAction(update_action)
         about=QAction("프로그램 정보",self);about.triggered.connect(self.show_about);help_menu.addAction(about)
-        if QGuiApplication.platformName().lower()!="offscreen":QTimer.singleShot(2500,lambda:self.updater.check(False))
-        QShortcut(QKeySequence("Ctrl+T"),self,activated=self.add_tab_shortcut);QShortcut(QKeySequence("Ctrl+PgDown"),self,activated=lambda:self.move_analysis_tab(1));QShortcut(QKeySequence("Ctrl+PgUp"),self,activated=lambda:self.move_analysis_tab(-1));QShortcut(QKeySequence("Ctrl+Z"),self,activated=self.undo_project);QShortcut(QKeySequence("Ctrl+Y"),self,activated=self.redo_project);QShortcut(QKeySequence("Ctrl+Shift+Z"),self,activated=self.redo_project);self.history_toggle=QPushButton("변경 기록");self.history_toggle.setObjectName("historyToggle");self.history_toggle.clicked.connect(self.toggle_history);self.statusBar().addPermanentWidget(self.history_toggle);self.history_dock.visibilityChanged.connect(lambda visible:self.history_toggle.setVisible(not visible));self.statusBar().showMessage(f"{APP_NAME} v{APP_VERSION}   ·   {APP_AUTHOR}   ·   {APP_EMAIL}");self._last_snapshot=self.snapshot();self._saved_snapshot=self._last_snapshot;self.refresh_history();self.apply_theme(self.theme_action.isChecked(),False)
+        self.recovery_file=Path(QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation))/"recovery"/(uuid4().hex+".json")
+        self.recovery_timer=QTimer(self);self.recovery_timer.setSingleShot(True);self.recovery_timer.setInterval(2000);self.recovery_timer.timeout.connect(self.save_recovery)
+        recovery_action=QAction("임시 저장 복구",self);recovery_action.triggered.connect(self.restore_recovery);menu.addAction(recovery_action)
+        if "b" not in APP_VERSION and QGuiApplication.platformName().lower()!="offscreen":QTimer.singleShot(2500,self,lambda:self.updater.check(False))
+        QShortcut(QKeySequence("Ctrl+T"),self,activated=self.add_tab_shortcut);QShortcut(QKeySequence("Ctrl+PgDown"),self,activated=lambda:self.move_analysis_tab(1));QShortcut(QKeySequence("Ctrl+PgUp"),self,activated=lambda:self.move_analysis_tab(-1));QShortcut(QKeySequence("Ctrl+Z"),self,activated=self.undo_project);QShortcut(QKeySequence("Ctrl+Y"),self,activated=self.redo_project);QShortcut(QKeySequence("Ctrl+Shift+Z"),self,activated=self.redo_project);self.history_toggle=QPushButton("변경 기록");self.history_toggle.setObjectName("historyToggle");self.history_toggle.clicked.connect(self.toggle_history);self.statusBar().addPermanentWidget(self.history_toggle);self.history_dock.visibilityChanged.connect(lambda visible:self.history_toggle.setVisible(not visible));self.statusBar().showMessage(f"{APP_NAME} v{APP_VERSION}   ·   {APP_AUTHOR}   ·   {APP_EMAIL}");self._last_snapshot=self.snapshot();self._saved_snapshot=self._last_snapshot;self.refresh_history();self.set_theme_mode(self.theme_mode,False)
+    def eventFilter(self,watched,event):
+        # Catch file drops over editors and table viewports as well as the window.
+        # Text-only drags retain their normal editing behavior.
+        if event.type() in (QEvent.DragEnter,QEvent.DragMove,QEvent.Drop) and isinstance(watched,QWidget) and watched.window() is self and event.mimeData().hasUrls():
+            path=project_drop_path(event.mimeData())
+            if not path or QApplication.activeModalWidget() is not None:
+                event.ignore();return True
+            if event.type()==QEvent.Drop:
+                focus=QApplication.focusWidget()
+                if focus and focus.window() is self:focus.clearFocus()
+                if self.project.analysis_edition=="2026":self.beta_page.commit()
+                else:self.workflow.commit()
+                self.mark_dirty()
+                if not self.confirm_discard() or not self.open_project_path(path):
+                    event.ignore();return True
+            event.setDropAction(Qt.CopyAction);event.accept();return True
+        return super().eventFilter(watched,event)
+
+    def choose_edition(self):
+        labels=["2013 도로용량편람", "2026 도로용량편람 (베타)"]
+        label,ok=QInputDialog.getItem(self,"분석 기준","이 프로젝트에 적용할 기준",labels,1 if self.project.analysis_edition=="2026" else 0,False)
+        if not ok:return
+        self.workflow.commit();self.project.analysis_edition="2026" if label==labels[1] else "2013"
+        self.project.source_note="도로용량편람(2026) 제12장 도시부 간선도로" if self.project.analysis_edition=="2026" else "도로용량편람(2013) 제12장 및 제8장"
+        self.sync_edition();self.mark_dirty()
+    def sync_edition(self):
+        if not hasattr(self,"beta_page"):return
+        beta=self.project.analysis_edition=="2026"
+        if not beta and self.beta_page.diagram_dialog is not None:
+            self.beta_page.diagram_dialog.hide()
+        if not beta and self.beta_page.road_dialog is not None:self.beta_page.road_dialog.hide()
+        self.beta_page.load_project(self.project)
+        self.tabs.setTabVisible(0,not beta);self.tabs.setTabVisible(1,not beta);self.tabs.setTabVisible(self.beta_index,beta)
+        self.tabs.setCurrentIndex(self.beta_index if beta else 0)
+        self.tabs.setTabText(0,"분석 · 2013")
+    def set_theme_mode(self,mode,persist=True):
+        self.theme_mode=mode if mode in self.theme_choices else "system"
+        for key,action in self.theme_choices.items():action.setChecked(key==self.theme_mode)
+        dark=self.theme_mode=="dark" or (self.theme_mode=="system" and QApplication.instance().styleHints().colorScheme()==Qt.ColorScheme.Dark)
+        self.apply_theme(dark,False)
+        if persist:QSettings("NYH","ArterialAnalysis").setValue("themeMode",self.theme_mode)
+    def follow_device_theme(self,*args):
+        if self.theme_mode=="system":self.set_theme_mode("system",False)
     def apply_theme(self,dark,persist=True):
         app=QApplication.instance()
         target=DARK_STYLE if dark else FAST_STYLE
@@ -1560,7 +1727,7 @@ class MainWindow(QMainWindow):
             field=html.escape(str(entry.get("field","") or "변경"));old=html.escape(str(entry.get("old","") if entry.get("old") is not None else "빈칸"));new=html.escape(str(entry.get("new","") if entry.get("new") is not None else "빈칸"));body=f'{field} <span style="color:#0F3675;font-weight:700">{old} → {new}</span>'
         segment_html=f'<a href="uid:{uid}" style="color:#0F3675;text-decoration:none;font-weight:700">{segment}</a> · ' if segment else ""
         return f'<div style="margin:0 0 9px 0;color:#111827"><span>{stamp} · {html.escape(tab)} · </span>{segment_html}{body}</div>'
-    def refresh_history(self):self.history_view.setHtml("".join(self.history_html(entry) for entry in reversed(self.project.change_log)) or '<span style="color:#64748B">기록된 변경사항이 없습니다.</span>')
+    def refresh_history(self):self.history_view.setHtml("".join(self.history_html(entry) for entry in reversed(self.project.change_log)) or '<span style="color:#64748B">변경 기록이 없습니다.</span>')
     def history_link(self,url):
         text=url.toString()
         if not text.startswith("uid:"):return
@@ -1570,7 +1737,7 @@ class MainWindow(QMainWindow):
     def restore_snapshot(self,text,kind):
         self._restoring=True
         try:
-            self.project=ArterialProject.from_dict(json.loads(text));self.project.add_log({"at":datetime.now().astimezone().isoformat(timespec="seconds"),"kind":kind,"scenario":"","year":""});self.workflow.load_project(self.project);self._last_snapshot=self.snapshot();self.dirty=self._last_snapshot!=self._saved_snapshot;self.update_title();self.refresh_history()
+            self.project=ArterialProject.from_dict(json.loads(text));self.project.add_log({"at":datetime.now().astimezone().isoformat(timespec="seconds"),"kind":kind,"scenario":"","year":""});self.workflow.load_project(self.project);self.sync_edition();self._last_snapshot=self.snapshot();self.dirty=self._last_snapshot!=self._saved_snapshot;self.update_title();self.refresh_history()
         finally:self._restoring=False
     def undo_project(self):
         if not self._undo:return
@@ -1578,22 +1745,28 @@ class MainWindow(QMainWindow):
     def redo_project(self):
         if not self._redo:return
         self._undo.append(self.snapshot());self.restore_snapshot(self._redo.pop(),"redo")
-    def add_tab_shortcut(self):self.workflow.input.analysis_tabs.setCurrentIndex(self.workflow.input.analysis_tabs.count()-1)
+    def add_tab_shortcut(self):
+        if self.project.analysis_edition=="2026":self.beta_page.add_corridor()
+        else:self.workflow.input.analysis_tabs.setCurrentIndex(self.workflow.input.analysis_tabs.count()-1)
     def move_analysis_tab(self,delta):
+        if self.project.analysis_edition=="2026":
+            box=self.beta_page.selector
+            if box.count():box.setCurrentIndex((box.currentIndex()+delta)%box.count())
+            return
         bar=self.workflow.input.analysis_tabs;count=max(1,bar.count()-1);bar.setCurrentIndex((bar.currentIndex()+delta)%count)
-    def show_about(self):QMessageBox.about(self,"프로그램 정보",f"<h2>{APP_NAME}</h2><p>v{APP_VERSION}</p><p>도로용량편람(2013) 기반</p><p>{APP_AUTHOR}<br>{APP_EMAIL}</p>")
+    def show_about(self):QMessageBox.about(self,"프로그램 정보",f"<h2>{APP_NAME}</h2><p>v{APP_VERSION}</p><p>2013 도로용량편람 / 2026 도로용량편람 (베타)</p><p>{APP_AUTHOR}<br>{APP_EMAIL}</p>")
     def new(self):
         if not self.confirm_discard():return
         d=AddTabDialog(self,"현황",self.project.current_year,True)
         if d.exec()!=QDialog.Accepted:return
-        self.project=blank_project(d.year.value());self.path=None;self.workflow.load_project(self.project);self.dirty=False;self._undo.clear();self._redo.clear();self._last_snapshot=self.snapshot();self._saved_snapshot=self._last_snapshot;self.refresh_history();self.update_title()
+        self.project=blank_project(d.year.value());self.path=None;self.workflow.load_project(self.project);self.sync_edition();self.dirty=False;self._undo.clear();self._redo.clear();self._last_snapshot=self.snapshot();self._saved_snapshot=self._last_snapshot;self.refresh_history();self.update_title()
     def open(self):
         if not self.confirm_discard():return
         path,_=QFileDialog.getOpenFileName(self,"프로젝트 열기","",PROJECT_FILTER)
         if not path:return
         self.open_project_path(path)
     def open_project_path(self,path):
-        try:self.project=ArterialProject.load(path);self.path=str(Path(path).resolve());self.resolve_sources();self.workflow.load_project(self.project);self.dirty=False;self._undo.clear();self._redo.clear();self._last_snapshot=self.snapshot();self._saved_snapshot=self._last_snapshot;self.refresh_history();self.update_title();return True
+        try:self.project=ArterialProject.load(path);self.path=str(Path(path).resolve());self.resolve_sources();self.workflow.load_project(self.project);self.sync_edition();self.dirty=False;self._undo.clear();self._redo.clear();self._last_snapshot=self.snapshot();self._saved_snapshot=self._last_snapshot;self.refresh_history();self.update_title();return True
         except Exception as exc:QMessageBox.critical(self,"열기 실패",str(exc))
         return False
     def save(self):
@@ -1604,7 +1777,7 @@ class MainWindow(QMainWindow):
                 if info.get("source_path"):
                     try:info["source_relative"]=str(Path(info["source_path"]).resolve().relative_to(base))
                     except ValueError:info["source_relative"]=""
-            self.project.save(self.path);self.dirty=False;self._last_snapshot=self.snapshot();self._saved_snapshot=self._last_snapshot;self.update_title();self.statusBar().showMessage("프로젝트를 저장했습니다.",4000);return True
+            self.project.save(self.path);self.clear_recovery();self.dirty=False;self._last_snapshot=self.snapshot();self._saved_snapshot=self._last_snapshot;self.update_title();self.statusBar().showMessage("프로젝트를 저장했습니다.",4000);return True
         except Exception as exc:QMessageBox.critical(self,"저장 실패",str(exc));return False
     def save_as(self):
         path,_=QFileDialog.getSaveFileName(self,"프로젝트 저장","도시교외간선도로분석.ara1",PROJECT_FILTER)
@@ -1616,6 +1789,32 @@ class MainWindow(QMainWindow):
         if hasattr(self,"_last_snapshot") and current==self._last_snapshot:self.refresh_history();return
         if hasattr(self,"_last_snapshot"):self._undo.append(self._last_snapshot);self._undo=self._undo[-200:];self._redo.clear();self._last_snapshot=current
         self.dirty=True;self.refresh_history();self.update_title();self.statusBar().showMessage("저장되지 않은 변경사항이 있습니다.")
+        if hasattr(self,"recovery_timer") and QGuiApplication.platformName().lower()!="offscreen":self.recovery_timer.start()
+    def save_recovery(self):
+        if not self.dirty:return
+        from .recovery import write_recovery
+        try:write_recovery(self.recovery_file,self.project,self.path)
+        except OSError as exc:self.statusBar().showMessage(f"임시 저장 실패: {exc}")
+    def clear_recovery(self):
+        if hasattr(self,"recovery_timer"):self.recovery_timer.stop()
+        if hasattr(self,"recovery_file"):
+            try:
+                self.recovery_file.unlink(missing_ok=True)
+                recovered=getattr(self,"_recovered_file",None)
+                if recovered:recovered.unlink(missing_ok=True);self._recovered_file=None
+            except OSError:pass
+    def restore_recovery(self):
+        from .recovery import read_recovery
+        files=sorted(self.recovery_file.parent.glob("*.json"),key=lambda p:p.stat().st_mtime,reverse=True)
+        if not files:QMessageBox.information(self,"임시 저장 복구","복구할 자료가 없습니다.");return
+        labels=[f"{datetime.fromtimestamp(p.stat().st_mtime):%Y-%m-%d %H:%M:%S} · {p.stem[:8]}" for p in files]
+        selected,ok=QInputDialog.getItem(self,"임시 저장 복구","복구할 자료",labels,0,False)
+        if not ok or not self.confirm_discard():return
+        try:project,source=read_recovery(files[labels.index(selected)])
+        except (OSError,ValueError,KeyError,TypeError) as exc:QMessageBox.warning(self,"복구 실패",str(exc));return
+        self._recovered_file=files[labels.index(selected)]
+        self.project=project;self.path=source;self.workflow.load_project(project);self.sync_edition();self.mark_dirty()
+        self.statusBar().showMessage("임시 저장 자료를 복구했습니다. 확인 후 저장하세요.")
     def resolve_sources(self):
         if not self.path:return
         base=Path(self.path).resolve().parent
@@ -1629,22 +1828,23 @@ class MainWindow(QMainWindow):
                 if len(matches)==1:info["source_path"]=str(matches[0].resolve())
     def event(self,event):
         result=super().event(event)
-        if event.type()==QEvent.WindowActivate and hasattr(self,"workflow") and self.workflow.input.current_key:
+        if event.type()==QEvent.WindowActivate and hasattr(self,"workflow") and self.project.analysis_edition=="2013" and self.workflow.input.current_key:
             info=self.project.tab_info(*self.workflow.input.current_key);path=info.get("source_path","")
             if path and Path(path).exists():
                 mtime=Path(path).stat().st_mtime
                 if info.get("source_mtime") not in (None,mtime):info["source_mtime"]=mtime;QTimer.singleShot(0,self.workflow.input.request_link_refresh)
         return result
-    def update_title(self):self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}{' *' if self.dirty else ''}"+(f" - {Path(self.path).name}" if self.path else ""))
+    def update_title(self):self.setWindowTitle(f"{APP_NAME} · {self.project.analysis_edition} v{APP_VERSION}{' *' if self.dirty else ''}"+(f" - {Path(self.path).name}" if self.path else ""))
     def confirm_discard(self):
         if not self.dirty:return True
-        box=QMessageBox(self);box.setWindowTitle("저장 확인");box.setText("분석 결과와 변경사항이 저장되지 않았습니다. 지금 저장하시겠습니까?");box.setStandardButtons(QMessageBox.Save|QMessageBox.Discard|QMessageBox.Cancel);box.button(QMessageBox.Save).setText("저장");box.button(QMessageBox.Discard).setText("저장안함");box.button(QMessageBox.Cancel).setText("취소");answer=box.exec();return bool(self.save()) if answer==QMessageBox.Save else answer==QMessageBox.Discard
+        box=QMessageBox(self);box.setWindowTitle("저장 확인");box.setText("분석 결과와 변경사항이 저장되지 않았습니다. 지금 저장하시겠습니까?");box.setStandardButtons(QMessageBox.Save|QMessageBox.Discard|QMessageBox.Cancel);box.button(QMessageBox.Save).setText("저장");box.button(QMessageBox.Discard).setText("저장 안 함");box.button(QMessageBox.Cancel).setText("취소");answer=box.exec();return bool(self.save()) if answer==QMessageBox.Save else answer==QMessageBox.Discard
     def closeEvent(self,event):
         focus=QApplication.focusWidget()
         if focus:focus.clearFocus()
         try:self.workflow.commit()
         except Exception:pass
         if self.confirm_discard():
+            self.clear_recovery()
             try:self.workflow.input.cancel_link("") if self.workflow.input._link_window else None
             except Exception:pass
             event.accept()
@@ -1729,4 +1929,4 @@ def enable_native_file_dialogs():
 
 
 def main():
-    enable_native_file_dialogs();app=QApplication(sys.argv);app.setStyle(TactileProxyStyle("Fusion"));apply_light_palette(app);load_font();app.setApplicationName(APP_NAME);app.setApplicationVersion(APP_VERSION);app.setStyleSheet(FAST_STYLE);register_project_file_association();w=MainWindow();startup_project=project_argument(sys.argv);w.open_project_path(startup_project) if startup_project else None;motion=MotionController(app);app.motion_controller=motion;motion.bind(w);w.showMaximized();return app.exec()
+    enable_native_file_dialogs();app=QApplication(sys.argv);app.setStyle(TactileProxyStyle("Fusion"));apply_light_palette(app);load_font();app.setApplicationName(APP_NAME);app.setApplicationVersion(APP_VERSION);app.setStyleSheet(FAST_STYLE);register_project_file_association() if "b" not in APP_VERSION else None;w=MainWindow();startup_project=project_argument(sys.argv);w.open_project_path(startup_project) if startup_project else None;QTimer.singleShot(0,w,w.restore_recovery) if not startup_project and any(w.recovery_file.parent.glob("*.json")) else None;motion=MotionController(app);app.motion_controller=motion;motion.bind(w);w.showMaximized();return app.exec()

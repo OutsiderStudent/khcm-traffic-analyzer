@@ -188,7 +188,7 @@ class FrozenColumnsView(QTableView):
     def scrollTo(self,index,hint=QAbstractItemView.EnsureVisible):
         if index.isValid() and index.column()<self.freeze_count:super().scrollTo(index,hint)
         self.anchor_horizontal()
-        QTimer.singleShot(0,self.anchor_horizontal)
+        QTimer.singleShot(0,self,self.anchor_horizontal)
 
     def anchor_horizontal(self):
         if self.horizontalScrollBar().value():self.horizontalScrollBar().setValue(0)
@@ -435,7 +435,7 @@ class SegmentDetailDialog(QDialog):
 class SpeedAdjustmentDialog(QDialog):
     def __init__(self, result: AnalysisResult, parent=None) -> None:
         super().__init__(parent); self.result=result; self.setWindowTitle("평균통행속도 수동조정"); self.setMinimumWidth(470)
-        root=QVBoxLayout(self); note=QLabel(f"편람 원계산값 {result.calculated_speed_kmh:.1f} km/h · 현재 적용값 {result.speed_kmh:.1f} km/h\n변경값은 모든 비교·통합·부록 표에 반영되고 수동조정으로 표시됩니다."); note.setObjectName("infoBar"); root.addWidget(note)
+        root=QVBoxLayout(self); note=QLabel(f"편람 계산값 {result.calculated_speed_kmh:.1f} km/h · 현재 적용값 {result.speed_kmh:.1f} km/h\n변경값은 모든 비교·통합·부록 표에 반영되고 수동조정으로 표시됩니다."); note.setObjectName("infoBar"); root.addWidget(note)
         form=QFormLayout(); self.speed=QDoubleSpinBox(); self.speed.setRange(0.1,200); self.speed.setDecimals(1); self.speed.setSuffix(" km/h"); self.speed.setValue(result.speed_kmh)
         self.reason=QTextEdit(); self.reason.setPlaceholderText("변경 근거와 사유를 반드시 입력해 주세요."); self.reason.setMinimumHeight(90)
         form.addRow("적용 평균통행속도",self.speed); form.addRow("변경 사유",self.reason); root.addLayout(form)
@@ -690,7 +690,7 @@ class InputPage(QWidget):
     def _refresh_live_row(self, table: QTableWidget, row: int) -> None:
         try:
             old={s.uid:s for s in self.project.segments}; segment=self._segment_from_row(table,row,EXTERNAL if table is self.external_table else INTERNAL,old)
-            result=analyze_segment(segment,self.project.settings); speed=f"{result.speed_kmh:.1f}"; los=result.los; tip=f"편람 원계산 {result.calculated_speed_kmh:.1f} km/h"
+            result=analyze_segment(segment,self.project.settings); speed=f"{result.speed_kmh:.1f}"; los=result.los; tip=f"편람 계산 {result.calculated_speed_kmh:.1f} km/h"
             error=False
         except (ValueError,TypeError) as exc: speed="확인"; los="-"; tip=str(exc) or "입력값을 확인해 주세요."; error=True
         table.blockSignals(True); table.item(row,20).setText(speed); table.item(row,21).setText(los); table.item(row,20).setToolTip(tip)
@@ -884,14 +884,14 @@ class ResultsPage(QWidget):
         super().__init__(); self.project=None; self.results=[]; self.current_spec=None; self.scope=[]
         root = QVBoxLayout(self); root.setContentsMargins(10, 5, 10, 5); root.setSpacing(3)
         hero_row=QHBoxLayout(); self.hero = QLabel(); self.hero.setObjectName("resultHero"); self.hero.setWordWrap(True); hero_row.addWidget(self.hero,1); self.copy_hero=QPushButton("문구 복사"); self.copy_hero.setObjectName("primaryButton"); hero_row.addWidget(self.copy_hero); root.addLayout(hero_row)
-        self.save_notice=QLabel("분석 결과를 확인한 뒤 프로젝트를 저장해 주세요."); self.save_notice.setObjectName("saveNotice"); root.addWidget(self.save_notice)
+        self.save_notice=QLabel("결과 확인 후 프로젝트를 저장하세요."); self.save_notice.setObjectName("saveNotice"); root.addWidget(self.save_notice)
         self.link_warning=QLabel();self.link_warning.setObjectName("linkWarning");self.link_warning.setWordWrap(True);self.link_warning.hide();root.addWidget(self.link_warning)
         sheet_group=QWidget();sheet_group_layout=QVBoxLayout(sheet_group);sheet_group_layout.setContentsMargins(0,0,0,0);sheet_group_layout.setSpacing(0)
         self.tabs = QTabBar(); self.tabs.setObjectName("sheetTabs"); self.tabs.setExpanding(False); self.tabs.setDrawBase(False); sheet_group_layout.addWidget(self.tabs)
         sheet_panel=QFrame();sheet_panel.setObjectName("tabSheetPanel");sheet_layout=QVBoxLayout(sheet_panel);sheet_layout.setContentsMargins(7,4,7,5);sheet_layout.setSpacing(3)
-        hint = QHBoxLayout(); copy_note = QLabel("표 범위를 선택한 뒤 Ctrl+C로 한글 표에 붙여넣을 수 있습니다. 평균통행속도 셀을 더블클릭하면 근거를 남기고 조정할 수 있습니다."); copy_note.setObjectName("copyNote"); hint.addWidget(copy_note); hint.addStretch(); sheet_layout.addLayout(hint)
+        hint = QHBoxLayout(); copy_note = QLabel("범위 선택 후 Ctrl+C로 복사할 수 있습니다. 평균통행속도 셀을 더블클릭하면 근거를 남기고 조정할 수 있습니다."); copy_note.setObjectName("copyNote"); hint.addWidget(copy_note); hint.addStretch(); sheet_layout.addLayout(hint)
         self.table = CopyableTable();result_card=make_card("2. 분석 결과", self.table);result_card.setObjectName("tabContentCard");sheet_layout.addWidget(result_card,1);sheet_group_layout.addWidget(sheet_panel,1);root.addWidget(sheet_group,1)
-        nav = QHBoxLayout(); self.back = QPushButton("구간 입력으로"); self.detail = QPushButton("부록용 세부 계산"); self.detail.setObjectName("primaryButton"); nav.addWidget(self.back); nav.addStretch(); nav.addWidget(self.detail); root.addLayout(nav)
+        nav = QHBoxLayout(); self.back = QPushButton("구간 입력으로"); self.detail = QPushButton("세부 계산"); self.detail.setObjectName("primaryButton"); nav.addWidget(self.back); nav.addStretch(); nav.addWidget(self.detail); root.addLayout(nav)
         self.tabs.currentChanged.connect(self.show_tab); self.copy_hero.clicked.connect(lambda:QGuiApplication.clipboard().setText(self.hero.text())); self.table.itemDoubleClicked.connect(self.edit_speed)
 
     def refresh(self, project: ArterialProject, results: list[AnalysisResult]) -> None:
@@ -1041,7 +1041,7 @@ class DetailPage(QWidget):
     def __init__(self) -> None:
         super().__init__(); self.project=None; self.results=[]; self.current_spec=None
         root=QVBoxLayout(self); root.setContentsMargins(14,10,14,10); root.setSpacing(6)
-        title=QLabel("부록용 세부 계산결과"); title.setObjectName("pageTitle"); root.addWidget(title)
+        title=QLabel("세부 계산결과"); title.setObjectName("pageTitle"); root.addWidget(title)
         sheet_group=QWidget();sheet_group_layout=QVBoxLayout(sheet_group);sheet_group_layout.setContentsMargins(0,0,0,0);sheet_group_layout.setSpacing(0)
         self.tabs=QTabBar(); self.tabs.setObjectName("sheetTabs"); self.tabs.setExpanding(False); self.tabs.setDrawBase(False); sheet_group_layout.addWidget(self.tabs)
         sheet_panel=QFrame();sheet_panel.setObjectName("tabSheetPanel");sheet_layout=QVBoxLayout(sheet_panel);sheet_layout.setContentsMargins(10,8,10,10);sheet_layout.setSpacing(6)

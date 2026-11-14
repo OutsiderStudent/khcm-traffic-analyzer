@@ -4,4 +4,8 @@ from arterial_analysis.app_fast import main
 
 
 if __name__ == "__main__":
+    import sys
+    if len(sys.argv)==3 and sys.argv[1]=="--verify-2026":
+        from arterial_analysis.verify_2026 import verify
+        raise SystemExit(verify(sys.argv[2]))
     raise SystemExit(main())

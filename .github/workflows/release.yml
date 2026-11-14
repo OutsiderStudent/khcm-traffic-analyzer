@@ -49,13 +49,23 @@ jobs:
       - name: Build executable
         shell: powershell
         run: .\build.ps1
+      - name: Verify packaged application
+        shell: powershell
+        run: |
+          $builtExe = Get-ChildItem -LiteralPath dist -Filter '*.exe' | Select-Object -First 1
+          $verifyDir = Join-Path $PWD 'packaged-verification'
+          $process = Start-Process -FilePath $builtExe.FullName -ArgumentList @('--verify-2026', ('"'+$verifyDir+'"')) -PassThru -WindowStyle Hidden
+          if (-not $process.WaitForExit(60000)) { Stop-Process -Id $process.Id; throw 'Packaged verification timed out.' }
+          if ($process.ExitCode -ne 0) { throw "Packaged verification failed: $($process.ExitCode)" }
+          $verified = Get-Content (Join-Path $verifyDir 'verification.json') -Raw | ConvertFrom-Json
+          if (-not $verified.packaged -or -not $verified.file_drop -or -not $verified.edition_switch) { throw 'Packaged checks incomplete.' }
       - name: Prepare release asset
         shell: powershell
         run: |
           $builtExe = Get-ChildItem -LiteralPath dist -Filter '*.exe' | Select-Object -First 1
           if (-not $builtExe) { throw 'Built executable not found.' }
           $version = '${{ github.ref_name }}'
-          if (-not $version.StartsWith('v')) { $version = 'v1.9.3-preview' }
+          if (-not $version.StartsWith('v')) { $version = 'v1.10.0-preview' }
           $releaseAsset = "dist/KHCM-Traffic-Analyzer_${version}_${{ matrix.arch }}.exe"
           Copy-Item -LiteralPath $builtExe.FullName -Destination $releaseAsset
       - uses: actions/upload-artifact@v4

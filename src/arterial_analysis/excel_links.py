@@ -277,12 +277,16 @@ def close_link_window(token: dict | None) -> None:
     try:
         excel=client.GetActiveObject("Excel.Application");excel.MoveAfterReturn=bool(token.get("move_after_return",True));workbook=_find_workbook(excel,token.get("path",""))
         if workbook is None:
-            if token.get("created_application"):excel.Quit();closed=True
+            if token.get("created_application") and not any(True for _ in excel.Workbooks):excel.Quit();closed=True
             return
         if token.get("opened_workbook"):
             if bool(workbook.Saved):
+                quit_after_close=token.get("created_application") and sum(1 for _ in excel.Workbooks)==1
                 workbook.Close(SaveChanges=False);closed=True
-                if token.get("created_application"):excel.Quit()
+                if quit_after_close:excel.Quit()
+            else:
+                # Keep a user-edited workbook open, including on cancellation.
+                closed=True
         else:
             window=next((item for item in workbook.Windows if int(item.Hwnd)==int(token.get("hwnd",0))),None)
             if window is not None:window.Close();closed=True
@@ -295,10 +299,15 @@ def close_link_window(token: dict | None) -> None:
         if not closed and hwnd and ctypes.windll.user32.IsWindow(hwnd):ctypes.windll.user32.PostMessageW(hwnd,0x0010,0,0)
 
 
-def active_selection() -> tuple[str,str,str,bool]:
+def active_selection(expected_window=None) -> tuple[str,str,str,bool]:
     pythoncom,client=_excel_modules();pythoncom.CoInitialize()
     try:
-        excel=client.GetActiveObject("Excel.Application");workbook=excel.ActiveWorkbook;sheet=excel.ActiveSheet;target=excel.Selection
+        excel=client.GetActiveObject("Excel.Application");workbook=excel.ActiveWorkbook
+        if expected_window:
+            window=excel.ActiveWindow
+            if workbook is None or window is None or int(window.Hwnd)!=expected_window["hwnd"] or Path(str(workbook.FullName)).resolve()!=Path(expected_window["path"]).resolve():
+                raise RuntimeError("연결용 Excel 창에서 셀을 선택해 주세요.")
+        sheet=excel.ActiveSheet;target=excel.Selection
         if workbook is None or sheet is None or target is None:raise RuntimeError("Excel에서 셀을 선택해 주세요.")
         areas=[normalize_cell(str(area.Address)) for area in target.Areas]
         return str(workbook.FullName),str(sheet.Name),normalize_expression(",".join(areas)),bool(workbook.Saved)

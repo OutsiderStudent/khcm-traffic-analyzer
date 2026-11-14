@@ -8,7 +8,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QRectF, QSize, Qt, QThread, QTimer
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QRect, QRectF, QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QLineEdit, QMessageBox, QPushButton, QStyleOptionViewItem, QTabBar, QTabWidget, QToolButton
@@ -30,6 +30,8 @@ class FastArterialUiTest(unittest.TestCase):
     def tearDown(self):
         self.wait_for_links()
         self.window.deleteLater()
+        APP.sendPostedEvents(None, QEvent.DeferredDelete)
+        APP.processEvents()
 
     def wait_for_links(self):
         deadline=time.monotonic()+5
@@ -46,7 +48,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page.commit_row(self.table,row,13)
 
     def test_release_and_blank_start(self):
-        self.assertEqual(APP_VERSION,"1.9.3")
+        self.assertEqual(APP_VERSION,"1.10.0")
         self.assertEqual(self.table.rowCount(),2)
         self.assertEqual(self.table.item(0,7).text(),"")
         self.assertEqual(self.table.item(0,12).text(),"")
@@ -253,6 +255,7 @@ class FastArterialUiTest(unittest.TestCase):
         self.page._link_table=self.table;self.page._link_row=0;self.page._link_col=12;self.page._link_window={"hwnd":123};self.page._enter_was_down=True;self.page._escape_was_down=False;self.page._link_timer=Mock()
         with patch("arterial_analysis.app_fast.ctypes.windll.user32.IsWindow",return_value=True),patch("arterial_analysis.app_fast.ctypes.windll.user32.GetAsyncKeyState",return_value=0),patch("arterial_analysis.app_fast.active_selection",return_value=(__file__,"Sheet1","B12",False)),patch("arterial_analysis.app_fast.read_saved_cell") as reader:
             self.page.poll_link()
+            self.wait_for_selection()
         reader.assert_not_called();segment=self.window.project.rows("현황",2026)[0]
         self.assertNotEqual(segment.main_volume,1234);self.assertIn("저장",self.page.formula.placeholderText())
 
@@ -260,9 +263,58 @@ class FastArterialUiTest(unittest.TestCase):
         timer=Mock();self.page._link_timer=timer;self.page._link_window={"hwnd":123};self.page._link_table=self.table;self.page._link_row=0;self.page._link_col=12
         with patch("arterial_analysis.app_fast.ctypes.windll.user32.IsWindow",return_value=False),patch("arterial_analysis.app_fast.close_link_window"):
             self.page.poll_link()
+            self.page._excel_close_pool.waitForDone(2000)
         timer.stop.assert_called_once();timer.deleteLater.assert_called_once()
         self.assertIsNone(self.page._link_timer);self.assertIsNone(self.page._link_window);self.assertIsNone(self.page._link_table)
         self.assertIn("다시 연결",self.page.formula.placeholderText())
+
+    def wait_for_selection(self):
+        deadline=time.monotonic()+5
+        while self.page._selection_job is not None and time.monotonic()<deadline:
+            APP.processEvents();time.sleep(.005)
+        self.assertIsNone(self.page._selection_job)
+
+    def test_excel_enter_read_keeps_ui_responsive_and_applies_saved_value(self):
+        self.fill_row(0,900)
+        page=self.page;page._link_table=self.table;page._link_row=0;page._link_col=12
+        page._link_window={"hwnd":123};page._enter_was_down=True;page._link_timer=Mock()
+        entered=Event();resume=Event();ticks=[]
+        def read(*_):
+            entered.set();resume.wait(3);return 1400,"B12"
+        with patch("arterial_analysis.app_fast.ctypes.windll.user32.IsWindow",return_value=True),patch("arterial_analysis.app_fast.ctypes.windll.user32.GetAsyncKeyState",return_value=0),patch("arterial_analysis.app_fast.active_selection",return_value=(__file__,"Sheet1","B12",True)),patch("arterial_analysis.app_fast.read_saved_cell",side_effect=read),patch("arterial_analysis.app_fast.close_link_window"):
+            try:
+                page.poll_link();self.assertTrue(entered.wait(2))
+                QTimer.singleShot(0,lambda:ticks.append(True));APP.processEvents()
+                self.assertEqual(ticks,[True]);self.assertEqual(self.table.item(0,12).text(),"900")
+            finally:resume.set()
+            self.wait_for_selection();page._excel_close_pool.waitForDone(2000)
+        self.assertEqual(self.table.item(0,12).text(),"1,400")
+        self.assertEqual(self.window.project.rows("현황",2026)[0].volume_source_cell,"B12")
+
+    def test_numeric_edit_only_parses_edited_row(self):
+        self.fill_row(0,800);self.fill_row(1,850)
+        peer=self.window.project.rows("현황",2026)[1]
+        with patch.object(self.page,"parse_row",wraps=self.page.parse_row) as parse:
+            self.table.item(0,12).setText("1200")
+        self.assertEqual(parse.call_count,1)
+        self.assertIs(self.window.project.rows("현황",2026)[1],peer)
+        self.assertEqual(self.window.project.rows("현황",2026)[0].main_volume,1200)
+
+    def test_excel_enter_result_is_discarded_if_target_changes(self):
+        self.fill_row(0,900)
+        page=self.page;page._link_table=self.table;page._link_row=0;page._link_col=12
+        page._link_window={"hwnd":123};page._enter_was_down=True;page._link_timer=Mock()
+        entered=Event();resume=Event()
+        def read(*_):
+            entered.set();resume.wait(3);return 1400,"B12"
+        with patch("arterial_analysis.app_fast.ctypes.windll.user32.IsWindow",return_value=True),patch("arterial_analysis.app_fast.ctypes.windll.user32.GetAsyncKeyState",return_value=0),patch("arterial_analysis.app_fast.active_selection",return_value=(__file__,"Sheet1","B12",True)),patch("arterial_analysis.app_fast.read_saved_cell",side_effect=read),patch("arterial_analysis.app_fast.close_link_window"):
+            try:
+                page.poll_link();self.assertTrue(entered.wait(2))
+                self.table.item(0,12).setText("1100")
+            finally:resume.set()
+            self.wait_for_selection();page._excel_close_pool.waitForDone(2000)
+        self.assertEqual(self.table.item(0,12).text(),"1,100")
+        self.assertFalse(self.window.project.rows("현황",2026)[0].volume_source_cell)
 
     def test_excel_link_completion_restores_maximized_window(self):
         self.window.showMaximized();APP.processEvents();self.page._link_was_maximized=True
@@ -595,7 +647,7 @@ class FastArterialUiTest(unittest.TestCase):
         before=self.table.rowCount();QTest.keyClick(self.table,Qt.Key_V,Qt.ControlModifier);self.assertEqual(self.table.rowCount(),before+2)
         QTest.keyClick(self.table,Qt.Key_Equal,Qt.ControlModifier);self.assertEqual(self.table.rowCount(),before+4)
         self.table.item(0,0).setCheckState(Qt.Checked);QTest.keyClick(self.table,Qt.Key_Delete,Qt.ControlModifier);self.assertEqual(self.table.rowCount(),before+2)
-        expected=((self.page.add,"양방향 구간 추가 (Ctrl++)"),(self.page.copy,"선택 구간 복사 (Ctrl+C)"),(self.page.paste,"구간 붙여넣기 (Ctrl+V)"),(self.page.delete,"선택 구간 삭제 (Ctrl+Del)"))
+        expected=((self.page.add,"구간 추가 (Ctrl++)"),(self.page.copy,"복사 (Ctrl+C)"),(self.page.paste,"붙여넣기 (Ctrl+V)"),(self.page.delete,"구간 삭제 (Ctrl+Del)"))
         for button,text in expected:
             self.assertEqual(button.text(),text);self.assertGreaterEqual(button.minimumWidth(),button.sizeHint().width());self.assertGreaterEqual(button.minimumHeight(),button.sizeHint().height())
         QApplication.clipboard().clear()

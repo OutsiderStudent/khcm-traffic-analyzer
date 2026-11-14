@@ -13,6 +13,7 @@ from arterial_analysis.excel_links import (
     parse_external_formula,
     normalize_expression,
     open_link_window,
+    active_selection,
     close_link_window,
     read_saved_cells,
     read_saved_expressions,
@@ -20,6 +21,15 @@ from arterial_analysis.excel_links import (
 
 
 class ExcelLinksTest(unittest.TestCase):
+    def test_selection_rejects_another_excel_window_before_reading_cells(self):
+        excel=SimpleNamespace(ActiveWorkbook=SimpleNamespace(FullName="right.xlsx"),ActiveWindow=SimpleNamespace(Hwnd=999))
+        pythoncom=SimpleNamespace(CoInitialize=Mock(),CoUninitialize=Mock())
+        client=SimpleNamespace(GetActiveObject=Mock(return_value=excel))
+        with patch("arterial_analysis.excel_links._excel_modules",return_value=(pythoncom,client)):
+            with self.assertRaisesRegex(RuntimeError,"Excel"):
+                active_selection({"hwnd":123,"path":"right.xlsx"})
+        pythoncom.CoUninitialize.assert_called_once()
+
     def tearDown(self):
         clear_saved_workbook_cache()
 
